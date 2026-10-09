@@ -11,6 +11,34 @@ const admSenha = 'Unipora5adm';
 
 const navy = Color(0xFF00085E);
 
+/// Barra lateral: azul bem clarinho; opção selecionada: azul mais escuro.
+const azulClaro = Color(0xFFEAF3FC);
+const azulSelecionado = Color(0xFFB4D2F3);
+
+/// Cores do cabeçalho e da barra lateral por área:
+/// Psicologia = azul clarinho; Estética = rosa clarinho.
+extension AreaTemaAdmin on Area {
+  Color get fundoClaro => switch (this) {
+        Area.psicologia => azulClaro,
+        Area.estetica => const Color(0xFFFDEEF5),
+      };
+
+  Color get fundoSelecionado => switch (this) {
+        Area.psicologia => azulSelecionado,
+        Area.estetica => const Color(0xFFF6C3DC),
+      };
+
+  Color get textoSelecionado => switch (this) {
+        Area.psicologia => navy,
+        Area.estetica => const Color(0xFF8A1450),
+      };
+
+  Color get bordaClara => switch (this) {
+        Area.psicologia => const Color(0xFFD6E4F5),
+        Area.estetica => const Color(0xFFF3D3E4),
+      };
+}
+
 const formasPagamento = ['Dinheiro', 'Pix', 'Cartão de débito', 'Cartão de crédito'];
 
 List<String> servicosDe(Area a) => switch (a) {
@@ -406,7 +434,7 @@ class Pagina extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(padding: const EdgeInsets.all(24), children: [
+    return ListView(padding: EdgeInsets.all(telaEstreita(context) ? 16 : 24), children: [
       Wrap(
         spacing: 16,
         runSpacing: 12,
@@ -435,10 +463,13 @@ class Pagina extends StatelessWidget {
 }
 
 /// Barra superior com a logo da Uniporá no canto esquerdo.
-PreferredSizeWidget barra({List<Widget>? acoes}) {
+PreferredSizeWidget barra({List<Widget>? acoes, Area? area}) {
   return AppBar(
     automaticallyImplyLeading: false,
-    backgroundColor: Colors.white,
+    backgroundColor: area?.fundoClaro ?? azulClaro,
+    surfaceTintColor: Colors.transparent,
+    scrolledUnderElevation: 0,
+    shape: Border(bottom: BorderSide(color: area?.bordaClara ?? const Color(0xFFD6E4F5))),
     titleSpacing: 16,
     title: const Align(
       alignment: Alignment.centerLeft,
@@ -448,14 +479,21 @@ PreferredSizeWidget barra({List<Widget>? acoes}) {
   );
 }
 
-Widget botaoSair(BuildContext context) => TextButton.icon(
-      onPressed: () {
-        dados.log('Logout do administrador');
-        Navigator.popUntil(context, (r) => r.isFirst);
-      },
-      icon: const Icon(Icons.logout),
-      label: const Text('Sair'),
-    );
+Widget botaoSair(BuildContext context) {
+  void sair() {
+    dados.log('Logout do administrador');
+    Navigator.popUntil(context, (r) => r.isFirst);
+  }
+
+  if (telaEstreita(context)) {
+    return IconButton(tooltip: 'Sair', icon: const Icon(Icons.logout), onPressed: sair);
+  }
+  return TextButton.icon(
+    onPressed: sair,
+    icon: const Icon(Icons.logout),
+    label: const Text('Sair'),
+  );
+}
 
 // ───── admin/paginas/acesso.dart ─────
 /// (funcionalidade, quem pode): T = atendente, X = auxiliar, C = cliente. Administrador sempre pode.
@@ -750,7 +788,7 @@ class _PaginaAuditoriaState extends State<PaginaAuditoria> {
             .toList();
         return Pagina(
           titulo: 'Auditoria – ${widget.a.nome}',
-          sub: 'UC14 – Registro imutável: usuário responsável, data/hora e detalhes de cada ação (cadastros, cancelamentos, lançamentos, alterações de triagem). Somente leitura.',
+          sub: 'Registro imutável: usuário responsável, data/hora e detalhes de cada ação (cadastros, cancelamentos, lançamentos, alterações de triagem). Somente leitura.',
           filhos: [
             SizedBox(
                 width: 320,
@@ -913,7 +951,7 @@ class PaginaCaixa extends StatelessWidget {
     if (av.isNotEmpty) {
       final soma = av.fold(0, (s, v) => s + v.valorCentavos);
       alerta(c, 'Fechamento impedido',
-          'Existe valor sem vínculo a atendimento (${formatarReais(soma)}). Corrija (vincule) antes de fechar o caixa (UC11).');
+          'Existe valor sem vínculo a atendimento (${formatarReais(soma)}). Corrija (vincule) antes de fechar o caixa.');
       return;
     }
     final total = dados.totalDia(a);
@@ -1147,7 +1185,7 @@ class _FormAtendDialogState extends State<FormAtendDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.agendar ? 'Novo agendamento (UC07)' : 'Registrar atendimento'),
+      title: Text(widget.agendar ? 'Novo agendamento' : 'Registrar atendimento'),
       content: SizedBox(
         width: 400,
         child: SingleChildScrollView(
@@ -1748,10 +1786,16 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: barra(acoes: [
-        TextButton.icon(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Voltar')),
+        if (telaEstreita(context))
+          IconButton(
+              tooltip: 'Voltar',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context))
+        else
+          TextButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('Voltar')),
       ]),
       body: Center(
         child: SingleChildScrollView(
@@ -1761,7 +1805,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
             child: Card(
               elevation: 6,
               child: Padding(
-                padding: const EdgeInsets.all(32),
+                padding: EdgeInsets.all(telaEstreita(context) ? 20 : 32),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1918,26 +1962,39 @@ class _AdminPanelState extends State<AdminPanel> {
     final largo = MediaQuery.of(context).size.width >= 900;
     if (_i >= s.length) _i = 0;
 
-    Widget menu() => ListView(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            for (var k = 0; k < s.length; k++)
-              ListTile(
-                selected: k == _i,
-                selectedColor: a.cor,
-                selectedTileColor: a.cor.withAlpha(25),
-                leading: Icon(s[k].icone),
-                title: Text(s[k].nome),
-                onTap: () {
-                  setState(() => _i = k);
-                  if (!largo) Navigator.pop(context);
-                },
-              ),
-          ],
+    // Material (e não Container) para a cor de seleção do ListTile aparecer por cima do fundo.
+    Widget menu() => Material(
+          color: a.fundoClaro,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            children: [
+              for (var k = 0; k < s.length; k++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: ListTile(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    selected: k == _i,
+                    selectedColor: a.textoSelecionado,
+                    selectedTileColor: a.fundoSelecionado,
+                    iconColor: Colors.blueGrey.shade700,
+                    textColor: Colors.blueGrey.shade800,
+                    leading: Icon(s[k].icone),
+                    title: Text(
+                      s[k].nome,
+                      style: TextStyle(fontWeight: k == _i ? FontWeight.w700 : FontWeight.w500),
+                    ),
+                    onTap: () {
+                      setState(() => _i = k);
+                      if (!largo) Navigator.pop(context);
+                    },
+                  ),
+                ),
+            ],
+          ),
         );
 
     return Scaffold(
-      appBar: barra(acoes: [
+      appBar: barra(area: a, acoes: [
         if (!largo)
           Builder(
               builder: (c) => IconButton(
@@ -1950,13 +2007,19 @@ class _AdminPanelState extends State<AdminPanel> {
             child: Text('Administração de ${a.nome}',
                 style: TextStyle(color: a.cor, fontWeight: FontWeight.bold)),
           ),
-        TextButton.icon(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.swap_horiz),
-            label: const Text('Trocar área')),
+        if (telaEstreita(context))
+          IconButton(
+              tooltip: 'Trocar área',
+              icon: const Icon(Icons.swap_horiz),
+              onPressed: () => Navigator.pop(context))
+        else
+          TextButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.swap_horiz),
+              label: const Text('Trocar área')),
         botaoSair(context),
       ]),
-      drawer: largo ? null : Drawer(child: SafeArea(child: menu())),
+      drawer: largo ? null : Drawer(backgroundColor: a.fundoClaro, child: SafeArea(child: menu())),
       body: Row(children: [
         if (largo) SizedBox(width: 250, child: menu()),
         if (largo) const VerticalDivider(width: 1),

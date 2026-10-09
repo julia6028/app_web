@@ -48,6 +48,9 @@ InputDecoration decoracaoCampo(String label,
   );
 }
 
+/// Celular (largura menor que 600 px).
+bool telaEstreita(BuildContext c) => MediaQuery.sizeOf(c).width < 600;
+
 // ───── core/formatadores.dart ─────
 String doisDigitos(int n) => n.toString().padLeft(2, '0');
 
@@ -746,7 +749,7 @@ class _FormularioLoginState extends State<FormularioLogin> {
         elevation: 6,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: Padding(
-          padding: const EdgeInsets.all(32),
+          padding: EdgeInsets.all(telaEstreita(context) ? 20 : 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
