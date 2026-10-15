@@ -9,6 +9,9 @@ import 'main.dart';
 const admLogin = 'adm unipora';
 const admSenha = 'Unipora5adm';
 
+// DEMO: senha de teste do login do auxiliar. TODO: remover quando houver backend.
+const senhaDemoAuxiliar = 'auxiliar123';
+
 const navy = Color(0xFF00085E);
 
 /// Barra lateral: azul bem clarinho; opção selecionada: azul mais escuro.
@@ -190,9 +193,10 @@ class Dados extends ChangeNotifier {
   /// Log somente de leitura (só é possível adicionar registros).
   List<String> get logs => List.unmodifiable(_logs);
 
-  void log(String acao, [Area? area]) {
+  /// [autor]: quem fez a ação (padrão: administrador).
+  void log(String acao, [Area? area, String? autor]) {
     final tag = area == null ? '' : '[${area.nome}] ';
-    _logs.insert(0, '${formatarDataHora(DateTime.now())} • $admLogin • $tag$acao');
+    _logs.insert(0, '${formatarDataHora(DateTime.now())} • ${autor ?? admLogin} • $tag$acao');
     if (_logs.length > _maxLogs) _logs.removeLast();
     notifyListeners();
   }
@@ -240,7 +244,7 @@ class Dados extends ChangeNotifier {
 
   void _semear() {
     final ana = Usuario('Ana Souza', Perfil.atendente, 'ana@email.com', Area.estetica);
-    final bia = Usuario('Bia Costa', Perfil.auxiliar, '(64) 99911-2233', Area.estetica);
+    final bia = Usuario('Bia Costa', Perfil.auxiliar, 'bia@email.com', Area.estetica);
     final julia = Usuario('Julia Rocha', Perfil.cliente, '(64) 99100-0001', Area.estetica);
     final fernanda = Usuario('Fernanda Lima', Perfil.cliente, '(64) 99100-0002', Area.estetica);
     final renata = Usuario('Renata Dias', Perfil.cliente, '(64) 99100-0003', Area.estetica);
@@ -250,7 +254,8 @@ class Dados extends ChangeNotifier {
     final joao = Usuario('João Pereira', Perfil.cliente, '(64) 99200-0002', Area.psicologia);
     final luiza = Usuario('Luiza Prado', Perfil.cliente, '(64) 99200-0003', Area.psicologia);
     final maria = Usuario('Maria Santos', Perfil.cliente, '(64) 99200-0004', Area.psicologia);
-    usuarios.addAll([ana, bia, julia, fernanda, renata, paula, rafael, marina, joao, luiza, maria]);
+    final carla = Usuario('Carla Mendes', Perfil.auxiliar, 'carla@email.com', Area.psicologia);
+    usuarios.addAll([ana, bia, julia, fernanda, renata, paula, rafael, marina, joao, luiza, maria, carla]);
 
     triagem.addAll([
       'Maria Santos • chegada 14:05',
@@ -280,6 +285,8 @@ class Dados extends ChangeNotifier {
       Atend(13, p, joao, paula, 'Consulta individual', emHoras(3), StatusAtend.agendado,
           lembrete: StatusLembrete.enviado),
       Atend(14, p, maria, paula, 'Triagem inicial', emHoras(-5), StatusAtend.agendado),
+      Atend(15, e, fernanda, ana, 'Massagem relaxante', emHoras(-1), StatusAtend.emAtendimento),
+      Atend(16, p, luiza, paula, 'Consulta individual', emHoras(-1), StatusAtend.emAtendimento),
     ]);
 
     avulsos.add(Avulso(Area.estetica, 8000, 'Dinheiro', DateTime.now()));
@@ -479,9 +486,9 @@ PreferredSizeWidget barra({List<Widget>? acoes, Area? area}) {
   );
 }
 
-Widget botaoSair(BuildContext context) {
+Widget botaoSair(BuildContext context, {String? acao, Area? area, String? autor}) {
   void sair() {
-    dados.log('Logout do administrador');
+    dados.log(acao ?? 'Logout do administrador', area, autor);
     Navigator.popUntil(context, (r) => r.isFirst);
   }
 
@@ -503,12 +510,12 @@ const _matriz = <(String, String)>[
   ('Consultar indicadores e relatórios', ''),
   ('Consultar log de auditoria', ''),
   ('Fechar caixa diário', 'X'),
-  ('Lançar valor no caixa', 'T'),
-  ('Receber cliente', 'T'),
+  ('Lançar valor no caixa', 'TX'),
+  ('Receber cliente', 'TX'),
   ('Registrar atendimento', 'TX'),
-  ('Concluir atendimento de estética', 'T'),
-  ('Agendar serviço', 'T'),
-  ('Remarcar/cancelar serviço', 'TC'),
+  ('Concluir atendimento de estética', 'TX'),
+  ('Agendar serviço', 'TX'),
+  ('Remarcar/cancelar serviço', 'TXC'),
 ];
 
 class PaginaAcesso extends StatelessWidget {
@@ -1917,48 +1924,43 @@ class _CardArea extends StatelessWidget {
 }
 
 // ───── admin/admin_panel.dart ─────
-class _Secao {
-  const _Secao(this.icone, this.nome, this.pagina);
+class SecaoPainel {
+  const SecaoPainel(this.icone, this.nome, this.pagina);
 
   final IconData icone;
   final String nome;
   final Widget pagina;
 }
 
-/// Painel de uma área, com menu lateral (ou gaveta em telas estreitas).
-class AdminPanel extends StatefulWidget {
-  const AdminPanel({super.key, required this.area});
+/// Layout comum dos painéis: cabeçalho com logo + menu lateral (gaveta em telas estreitas).
+/// As cores seguem a área (Psicologia = azul, Estética = rosa).
+class PainelComMenu extends StatefulWidget {
+  const PainelComMenu({
+    super.key,
+    required this.area,
+    required this.titulo,
+    required this.secoes,
+    required this.sair,
+    this.podeTrocarArea = true,
+  });
 
   final Area area;
+  final String titulo;
+  final List<SecaoPainel> secoes;
+  final Widget Function(BuildContext) sair;
+  final bool podeTrocarArea;
 
   @override
-  State<AdminPanel> createState() => _AdminPanelState();
+  State<PainelComMenu> createState() => _PainelComMenuState();
 }
 
-class _AdminPanelState extends State<AdminPanel> {
+class _PainelComMenuState extends State<PainelComMenu> {
   int _i = 0;
-
-  List<_Secao> get _secoes {
-    final a = widget.area;
-    return [
-      _Secao(Icons.dashboard, 'Visão geral', VisaoGeral(a)),
-      _Secao(Icons.people, 'Usuários', PaginaUsuarios(a)),
-      _Secao(Icons.calendar_month, 'Agenda', PaginaAgenda(a)),
-      _Secao(Icons.assignment_ind, 'Atendimentos', PaginaAtendimentos(a)),
-      _Secao(Icons.event_busy, 'Faltas', PaginaFaltas(a)),
-      _Secao(Icons.notifications_active, 'Lembretes WhatsApp', PaginaLembretes(a)),
-      _Secao(Icons.point_of_sale, 'Caixa', PaginaCaixa(a)),
-      if (a == Area.psicologia) const _Secao(Icons.low_priority, 'Triagem', PaginaTriagem()),
-      _Secao(Icons.bar_chart, 'Indicadores e relatórios', PaginaIndicadores(a)),
-      const _Secao(Icons.shield, 'Controle de acesso', PaginaAcesso()),
-      _Secao(Icons.history, 'Auditoria', PaginaAuditoria(a)),
-    ];
-  }
 
   @override
   Widget build(BuildContext context) {
     final a = widget.area;
-    final s = _secoes;
+    final s = widget.secoes;
     final largo = MediaQuery.of(context).size.width >= 900;
     if (_i >= s.length) _i = 0;
 
@@ -1993,6 +1995,18 @@ class _AdminPanelState extends State<AdminPanel> {
           ),
         );
 
+    final Widget? trocar = !widget.podeTrocarArea
+        ? null
+        : telaEstreita(context)
+            ? IconButton(
+                tooltip: 'Trocar área',
+                icon: const Icon(Icons.swap_horiz),
+                onPressed: () => Navigator.pop(context))
+            : TextButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.swap_horiz),
+                label: const Text('Trocar área'));
+
     return Scaffold(
       appBar: barra(area: a, acoes: [
         if (!largo)
@@ -2004,20 +2018,11 @@ class _AdminPanelState extends State<AdminPanel> {
         if (largo)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: Text('Administração de ${a.nome}',
+            child: Text(widget.titulo,
                 style: TextStyle(color: a.cor, fontWeight: FontWeight.bold)),
           ),
-        if (telaEstreita(context))
-          IconButton(
-              tooltip: 'Trocar área',
-              icon: const Icon(Icons.swap_horiz),
-              onPressed: () => Navigator.pop(context))
-        else
-          TextButton.icon(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.swap_horiz),
-              label: const Text('Trocar área')),
-        botaoSair(context),
+        if (trocar != null) trocar,
+        widget.sair(context),
       ]),
       drawer: largo ? null : Drawer(backgroundColor: a.fundoClaro, child: SafeArea(child: menu())),
       body: Row(children: [
@@ -2025,6 +2030,37 @@ class _AdminPanelState extends State<AdminPanel> {
         if (largo) const VerticalDivider(width: 1),
         Expanded(child: s[_i].pagina),
       ]),
+    );
+  }
+}
+
+/// Painel do administrador de uma área.
+class AdminPanel extends StatelessWidget {
+  const AdminPanel({super.key, required this.area});
+
+  final Area area;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = area;
+    return PainelComMenu(
+      area: a,
+      titulo: 'Administração de ${a.nome}',
+      sair: botaoSair,
+      secoes: [
+        SecaoPainel(Icons.dashboard, 'Visão geral', VisaoGeral(a)),
+        SecaoPainel(Icons.people, 'Usuários', PaginaUsuarios(a)),
+        SecaoPainel(Icons.calendar_month, 'Agenda', PaginaAgenda(a)),
+        SecaoPainel(Icons.assignment_ind, 'Atendimentos', PaginaAtendimentos(a)),
+        SecaoPainel(Icons.event_busy, 'Faltas', PaginaFaltas(a)),
+        SecaoPainel(Icons.notifications_active, 'Lembretes WhatsApp', PaginaLembretes(a)),
+        SecaoPainel(Icons.point_of_sale, 'Caixa', PaginaCaixa(a)),
+        if (a == Area.psicologia)
+          const SecaoPainel(Icons.low_priority, 'Triagem', PaginaTriagem()),
+        SecaoPainel(Icons.bar_chart, 'Indicadores e relatórios', PaginaIndicadores(a)),
+        const SecaoPainel(Icons.shield, 'Controle de acesso', PaginaAcesso()),
+        SecaoPainel(Icons.history, 'Auditoria', PaginaAuditoria(a)),
+      ],
     );
   }
 }

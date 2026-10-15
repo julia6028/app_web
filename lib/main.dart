@@ -1,6 +1,8 @@
+import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'admin.dart';
+import 'auxiliar.dart';
 
 // ───── core/area.dart ─────
 /// Áreas disponíveis no app.
@@ -50,6 +52,19 @@ InputDecoration decoracaoCampo(String label,
 
 /// Celular (largura menor que 600 px).
 bool telaEstreita(BuildContext c) => MediaQuery.sizeOf(c).width < 600;
+
+/// Permite arrastar com o mouse (além do toque) para rolar para os lados e para baixo.
+class ArrastarScrollBehavior extends MaterialScrollBehavior {
+  const ArrastarScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      };
+}
 
 // ───── core/formatadores.dart ─────
 String doisDigitos(int n) => n.toString().padLeft(2, '0');
@@ -881,11 +896,24 @@ class _EscolhaArea extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 40),
-        TextButton.icon(
-          onPressed: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const AdminLoginPage())),
-          icon: const Icon(Icons.admin_panel_settings_outlined),
-          label: const Text('Acesso administrativo'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.center,
+          children: [
+            TextButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AuxiliarLoginPage())),
+              icon: const Icon(Icons.badge_outlined),
+              label: const Text('Acesso do auxiliar'),
+            ),
+            TextButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AdminLoginPage())),
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              label: const Text('Acesso administrativo'),
+            ),
+          ],
         ),
       ],
     );
@@ -904,6 +932,7 @@ class MyApp extends StatelessWidget {
       title: 'Estética & Psicologia',
       debugShowCheckedModeBanner: false,
       theme: criarTema(),
+      scrollBehavior: const ArrastarScrollBehavior(),
       home: const LoginPage(),
     );
   }
