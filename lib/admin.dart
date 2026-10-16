@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,7 +44,7 @@ extension AreaTemaAdmin on Area {
       };
 }
 
-const formasPagamento = ['Dinheiro', 'Pix', 'Cartão de débito', 'Cartão de crédito'];
+const formasPagamento = ['Pix', 'Cartão de débito', 'Cartão de crédito'];
 
 List<String> servicosDe(Area a) => switch (a) {
       Area.estetica => [
@@ -185,6 +187,9 @@ class Dados extends ChangeNotifier {
   /// chave do caixa do dia → total fechado (centavos).
   final fechamentos = <String, int>{};
 
+  /// chave do caixa do dia → comprovantes de pagamento anexados no fechamento.
+  final comprovantes = <String, List<Comprovante>>{};
+
   final _logs = <String>[];
   int _seq = 100;
 
@@ -289,7 +294,7 @@ class Dados extends ChangeNotifier {
       Atend(16, p, luiza, paula, 'Consulta individual', emHoras(-1), StatusAtend.emAtendimento),
     ]);
 
-    avulsos.add(Avulso(Area.estetica, 8000, 'Dinheiro', DateTime.now()));
+    avulsos.add(Avulso(Area.estetica, 8000, 'Pix', DateTime.now()));
   }
 }
 
@@ -837,7 +842,7 @@ class _LancarValorDialog extends StatefulWidget {
 class _LancarValorDialogState extends State<_LancarValorDialog> {
   final _valor = TextEditingController();
   late Atend _sel = widget.pendentes.first;
-  String _forma = formasPagamento[1];
+  String _forma = formasPagamento.first;
   String? _erro;
 
   @override
@@ -962,12 +967,17 @@ class PaginaCaixa extends StatelessWidget {
       return;
     }
     final total = dados.totalDia(a);
-    final ok = await confirmar(c, 'Fechar caixa de hoje?',
-        '${dados.lancadosHoje(a).length} lançamento(s) • Total do dia: ${formatarReais(total)}',
-        rotulo: 'Confirmar fechamento');
-    if (!ok) return;
+    final anexos = await showDialog<List<Comprovante>>(
+      context: c,
+      builder: (_) => FecharCaixaDialog(
+          resumo:
+              '${dados.lancadosHoje(a).length} lançamento(s) • Total do dia: ${formatarReais(total)}'),
+    );
+    if (anexos == null) return;
+    dados.comprovantes[chave] = anexos;
     dados.fechamentos[chave] = total;
-    dados.log('Caixa diário fechado: total ${formatarReais(total)}', a);
+    final extra = anexos.isEmpty ? '' : ' • ${anexos.length} comprovante(s) anexado(s)';
+    dados.log('Caixa diário fechado: total ${formatarReais(total)}$extra', a);
   }
 
   @override
@@ -1000,6 +1010,7 @@ class PaginaCaixa extends StatelessWidget {
                   fechado == null ? 'Aberto' : 'Fechado ${formatarReais(fechado)}',
                   fechado == null ? Colors.orange : Colors.green),
             ]),
+            ...secaoComprovantes(c, dados.chaveCaixa(a)),
             const SizedBox(height: 24),
             Text('Lançamentos', style: Theme.of(c).textTheme.titleMedium),
             const SizedBox(height: 8),
@@ -2060,6 +2071,142 @@ class AdminPanel extends StatelessWidget {
         SecaoPainel(Icons.bar_chart, 'Indicadores e relatórios', PaginaIndicadores(a)),
         const SecaoPainel(Icons.shield, 'Controle de acesso', PaginaAcesso()),
         SecaoPainel(Icons.history, 'Auditoria', PaginaAuditoria(a)),
+      ],
+    );
+  }
+}
+
+// ───── comprovantes de pagamento (fechamento do caixa) ─────
+
+/// Comprovante de pagamento anexado no fechamento do caixa.
+class Comprovante {
+  Comprovante(this.nome, this.tamanho, this.bytes);
+
+  final String nome;
+  final int tamanho;
+
+  /// Conteúdo do arquivo (para enviar ao backend depois).
+  final Uint8List? bytes;
+}
+
+String formatarTamanho(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+/// Lista os comprovantes anexados no fechamento do dia (vazia se não houver).
+List<Widget> secaoComprovantes(BuildContext c, String chave) {
+  final l = dados.comprovantes[chave];
+  if (l == null || l.isEmpty) return const [];
+  return [
+    const SizedBox(height: 24),
+    Text('Comprovantes de pagamento anexados', style: Theme.of(c).textTheme.titleMedium),
+    const SizedBox(height: 8),
+    Card(
+      child: Column(children: [
+        for (final x in l)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.attach_file),
+            title: Text(x.nome),
+            subtitle: Text(formatarTamanho(x.tamanho)),
+          ),
+      ]),
+    ),
+  ];
+}
+
+/// Confirmação do fechamento do caixa, com a opção de anexar comprovantes de pagamento.
+/// Devolve a lista de anexos (pode ser vazia) ao confirmar, ou null se cancelar.
+class FecharCaixaDialog extends StatefulWidget {
+  const FecharCaixaDialog({super.key, required this.resumo});
+
+  final String resumo;
+
+  @override
+  State<FecharCaixaDialog> createState() => _FecharCaixaDialogState();
+}
+
+class _FecharCaixaDialogState extends State<FecharCaixaDialog> {
+  static const _maxBytes = 5 * 1024 * 1024;
+
+  final _anexos = <Comprovante>[];
+  String? _erro;
+
+  Future<void> _anexar() async {
+    final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (r == null || !mounted) return;
+    final recusados = <String>[];
+    setState(() {
+      for (final f in r.files) {
+        if (f.size > _maxBytes) {
+          recusados.add(f.name);
+        } else {
+          _anexos.add(Comprovante(f.name, f.size, f.bytes));
+        }
+      }
+      _erro = recusados.isEmpty
+          ? null
+          : 'Não anexado (maior que 5 MB): ${recusados.join(', ')}';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Fechar caixa de hoje?'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.resumo),
+              const SizedBox(height: 16),
+              const Text('Comprovantes de pagamento (opcional)',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _anexar,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Anexar comprovante'),
+              ),
+              const SizedBox(height: 4),
+              const Text('PDF, PNG ou JPG, até 5 MB cada.', style: TextStyle(fontSize: 12)),
+              for (var i = 0; i < _anexos.length; i++)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.attach_file),
+                  title: Text(_anexos[i].nome),
+                  subtitle: Text(formatarTamanho(_anexos[i].tamanho)),
+                  trailing: IconButton(
+                    tooltip: 'Remover',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => setState(() => _anexos.removeAt(i)),
+                  ),
+                ),
+              if (_erro != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_erro!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+            onPressed: () => Navigator.pop(context, List<Comprovante>.of(_anexos)),
+            child: const Text('Confirmar fechamento')),
       ],
     );
   }

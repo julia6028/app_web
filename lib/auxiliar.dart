@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'admin.dart';
@@ -399,7 +400,6 @@ class PaginaAgendarServico extends StatefulWidget {
 
 class _PaginaAgendarServicoState extends State<PaginaAgendarServico> {
   Usuario? _cli;
-  Usuario? _prof;
   late String _serv = servicosDe(_area).first;
   DateTime? _quando;
   String? _erro;
@@ -413,22 +413,33 @@ class _PaginaAgendarServicoState extends State<PaginaAgendarServico> {
   }
 
   void _agendar() {
-    final cli = _cli, prof = _prof, q = _quando;
-    if (cli == null || prof == null || q == null) {
-      setState(() => _erro = 'Escolha o cliente, o profissional e a data/hora.');
+    final cli = _cli, q = _quando;
+    if (cli == null || q == null) {
+      setState(() => _erro = 'Escolha o cliente e a data/hora.');
       return;
     }
     if (q.isBefore(DateTime.now())) {
       setState(() => _erro = 'Escolha um horário futuro.');
       return;
     }
-    final ocupado = dados.atendimentos.any(
-        (x) => x.prof == prof && x.aberto && x.quando.difference(q).abs().inMinutes < 60);
-    if (ocupado) {
-      setState(() => _erro =
-          'Horário já ocupado por ${prof.nome}. Sugestão: ${formatarDataHora(q.add(const Duration(hours: 1)))}.');
+    // Distribuição aleatória entre os profissionais cadastrados e livres no horário.
+    final profs = dados.usuarios
+        .where((u) => u.area == _area && u.perfil == Perfil.atendente && u.ativo)
+        .toList();
+    if (profs.isEmpty) {
+      setState(() => _erro = 'Não há profissional cadastrado nesta área.');
       return;
     }
+    final livres = profs
+        .where((p) => !dados.atendimentos.any(
+            (x) => x.prof == p && x.aberto && x.quando.difference(q).abs().inMinutes < 60))
+        .toList();
+    if (livres.isEmpty) {
+      setState(() => _erro =
+          'Todos os profissionais estão ocupados nesse horário. Sugestão: ${formatarDataHora(q.add(const Duration(hours: 1)))}.');
+      return;
+    }
+    final prof = livres[Random().nextInt(livres.length)];
     if (dados.faltas(cli) >= 3 && !dados.liberados.contains(cli.id)) {
       setState(() => _erro =
           '${cli.nome} atingiu 3 faltas. Novo agendamento bloqueado: depende da aprovação do Administrador.');
@@ -446,13 +457,12 @@ class _PaginaAgendarServicoState extends State<PaginaAgendarServico> {
       _quando = null;
       _erro = null;
     });
-    msg(context, 'Agendamento criado; lembrete programado.');
+    msg(context, 'Agendamento criado com ${prof.nome}; lembrete programado.');
   }
 
   @override
   Widget build(BuildContext context) => Obs((c) {
         final clientes = dados.clientes(_area);
-        final profs = dados.profissionais(_area);
         final servs = servicosDe(_area);
         final futuros = dados
             .doArea(_area)
@@ -461,7 +471,7 @@ class _PaginaAgendarServicoState extends State<PaginaAgendarServico> {
           ..sort((x, y) => x.quando.compareTo(y.quando));
         return Pagina(
           titulo: 'Agendar serviço – ${_area.nome}',
-          sub: 'Escolha o cliente, o tipo de serviço, o profissional e o horário. O sistema verifica disponibilidade e conflitos; clientes com 3 faltas dependem da aprovação do Administrador.',
+          sub: 'Escolha o cliente, o tipo de serviço e o horário. O sistema distribui o cliente aleatoriamente entre os profissionais cadastrados que estiverem livres nesse horário; clientes com 3 faltas dependem da aprovação do Administrador.',
           filhos: [
             Card(
               child: Padding(
@@ -480,14 +490,6 @@ class _PaginaAgendarServicoState extends State<PaginaAgendarServico> {
                         width: 240,
                         child: seletor<String>('Tipo de serviço', _serv, servs,
                             (v) => setState(() => _serv = v!))),
-                    SizedBox(
-                        width: 240,
-                        child: seletor<Usuario>(
-                            'Profissional',
-                            profs.contains(_prof) ? _prof : null,
-                            profs,
-                            (v) => setState(() => _prof = v),
-                            (u) => u.nome)),
                     OutlinedButton.icon(
                       onPressed: _escolherData,
                       icon: const Icon(Icons.schedule),
@@ -641,7 +643,7 @@ class PaginaLancarValor extends StatefulWidget {
 class _PaginaLancarValorState extends State<PaginaLancarValor> {
   final _valor = TextEditingController();
   Atend? _sel;
-  String _forma = formasPagamento[1];
+  String _forma = formasPagamento.first;
   String? _erro;
 
   Area get _area => widget.auxiliar.area;
@@ -824,14 +826,17 @@ class PaginaFecharCaixa extends StatelessWidget {
     final aviso = pend > 0
         ? '\n\nAtenção: há $pend atendimento(s) concluído(s) ainda sem valor lançado.'
         : '';
-    final ok = await confirmar(
-        c,
-        'Fechar caixa de hoje?',
-        '${dados.lancadosHoje(_area).length} lançamento(s) • Total do dia: ${formatarReais(total)}$aviso',
-        rotulo: 'Confirmar fechamento');
-    if (!ok) return;
+    final anexos = await showDialog<List<Comprovante>>(
+      context: c,
+      builder: (_) => FecharCaixaDialog(
+          resumo:
+              '${dados.lancadosHoje(_area).length} lançamento(s) • Total do dia: ${formatarReais(total)}$aviso'),
+    );
+    if (anexos == null) return;
+    dados.comprovantes[chave] = anexos;
     dados.fechamentos[chave] = total;
-    dados.log('Caixa diário fechado: total ${formatarReais(total)}', _area, _autor);
+    final extra = anexos.isEmpty ? '' : ' • ${anexos.length} comprovante(s) anexado(s)';
+    dados.log('Caixa diário fechado: total ${formatarReais(total)}$extra', _area, _autor);
     if (c.mounted) msg(c, 'Caixa fechado. Total consolidado: ${formatarReais(total)}.');
   }
 
@@ -860,6 +865,7 @@ class PaginaFecharCaixa extends StatelessWidget {
                   fechado == null ? 'Aberto' : 'Fechado ${formatarReais(fechado)}',
                   fechado == null ? Colors.orange : Colors.green),
             ]),
+            ...secaoComprovantes(c, dados.chaveCaixa(_area)),
             const SizedBox(height: 24),
             Text('Valores lançados hoje', style: Theme.of(c).textTheme.titleMedium),
             const SizedBox(height: 8),
