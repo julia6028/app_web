@@ -1,8 +1,11 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import 'admin.dart';
+import 'caixa.dart';
 import 'main.dart';
+import 'recepcao.dart';
 
 /// Painel do auxiliar (Psicologia ou Estética): agenda, recepção, conclusão, caixa.
 class AuxiliarPanel extends StatelessWidget {
@@ -20,12 +23,13 @@ class AuxiliarPanel extends StatelessWidget {
       sair: (c) => botaoSair(c,
           acao: 'Logout do auxiliar', area: area, autor: auxiliar.nome),
       secoes: [
+        SecaoPainel(Icons.how_to_reg, 'Recepção e fila', PaginaRecepcao(area, autor: auxiliar.nome)),
+        SecaoPainel(Icons.tv, 'Painel da fila', PaginaPainelFila(area)),
         SecaoPainel(Icons.event_available, 'Agendar serviço', PaginaAgendarServico(auxiliar)),
         SecaoPainel(Icons.edit_calendar, 'Remarcar/cancelar serviço', PaginaRemarcarCancelar(auxiliar)),
         SecaoPainel(Icons.login, 'Receber cliente', PaginaReceberCliente(auxiliar)),
         SecaoPainel(Icons.task_alt, 'Concluir atendimento', PaginaConcluirAtendimento(auxiliar)),
-        SecaoPainel(Icons.point_of_sale, 'Lançar valor no caixa', PaginaLancarValor(auxiliar)),
-        SecaoPainel(Icons.lock, 'Fechar caixa diário', PaginaFecharCaixa(auxiliar)),
+        SecaoPainel(Icons.point_of_sale, 'Caixa', PaginaCaixa(area, auxiliar: auxiliar)),
       ],
     );
   }
@@ -153,6 +157,7 @@ class _PaginaReceberClienteState extends State<PaginaReceberCliente> {
             cl.ativo
                 ? chipRotulo('Cadastro confirmado', Colors.green, icone: Icons.verified_user_outlined)
                 : chipRotulo('Cadastro desativado', Colors.grey, icone: Icons.block),
+            chipSituacaoCliente(cl),
             Text(cl.contato),
           ]),
           const SizedBox(height: 12),
@@ -167,6 +172,7 @@ class _PaginaReceberClienteState extends State<PaginaReceberCliente> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
                     Text('${formatarDataHora(x.quando)} • ${x.servico}'),
+                    chipConfirmacao(x),
                     FilledButton.icon(
                       onPressed: () => _receber(x),
                       icon: const Icon(Icons.login),
@@ -230,14 +236,16 @@ class _PaginaReceberClienteState extends State<PaginaReceberCliente> {
             Text('Agendamentos em aberto', style: Theme.of(c).textTheme.titleMedium),
             const SizedBox(height: 8),
             tabela(
-              ['Nº', 'Data/hora', 'Cliente', 'Serviço', 'Status', 'Ação'],
+              ['Nº', 'Data/hora', 'Cliente', 'Situação do cliente', 'Serviço', 'Confirmação', 'Status', 'Ação'],
               [
                 for (final x in abertos)
                   [
                     Text('#${x.id}'),
                     Text(formatarDataHora(x.quando)),
                     Text(x.cliente.nome),
+                    chipSituacaoCliente(x.cliente),
                     Text(x.servico),
+                    chipConfirmacao(x),
                     chipStatus(x.status),
                     TextButton.icon(
                         onPressed: () => _receber(x),
@@ -260,13 +268,8 @@ class PaginaConcluirAtendimento extends StatelessWidget {
 
   Area get _area => auxiliar.area;
 
-  Future<void> _concluir(BuildContext c, Atend x) async {
-    final ok = await showDialog<bool>(
-        context: c, builder: (_) => _ConcluirDialog(x: x, auxiliar: auxiliar));
-    if (ok == true && c.mounted) {
-      msg(c, 'Atendimento concluído. Disponível para lançamento no caixa.');
-    }
-  }
+  Future<void> _concluir(BuildContext c, Atend x) =>
+      concluirAtendimento(c, x, autor: auxiliar.nome);
 
   @override
   Widget build(BuildContext context) => Obs((c) {
@@ -289,13 +292,15 @@ class PaginaConcluirAtendimento extends StatelessWidget {
             Text('Atendimentos em andamento', style: Theme.of(c).textTheme.titleMedium),
             const SizedBox(height: 8),
             tabela(
-              ['Nº', 'Início', 'Cliente', 'Serviço', 'Status', 'Ação'],
+              ['Nº', 'Senha', 'Início', 'Cliente', 'Situação do cliente', 'Serviço', 'Status', 'Ação'],
               [
                 for (final x in andamento)
                   [
                     Text('#${x.id}'),
+                    celulaSenha(x),
                     Text(formatarDataHora(x.quando)),
                     Text(x.cliente.nome),
+                    chipSituacaoCliente(x.cliente),
                     Text(x.servico),
                     chipStatus(x.status),
                     FilledButton.icon(
@@ -317,74 +322,13 @@ class PaginaConcluirAtendimento extends StatelessWidget {
                     Text(formatarDataHora(x.quando)),
                     Text(x.cliente.nome),
                     Text(x.servico),
-                    Text(x.lancado ? '${formatarReais(x.valorCentavos)} (${x.forma})' : 'a lançar'),
+                    Text(x.lancado ? '${formatarReais(x.valorPago)} (${x.formasPagas})' : 'a lançar'),
                   ]
               ],
             ),
           ],
         );
       });
-}
-
-class _ConcluirDialog extends StatefulWidget {
-  const _ConcluirDialog({required this.x, required this.auxiliar});
-
-  final Atend x;
-  final Usuario auxiliar;
-
-  @override
-  State<_ConcluirDialog> createState() => _ConcluirDialogState();
-}
-
-class _ConcluirDialogState extends State<_ConcluirDialog> {
-  bool _confirmou = false;
-  String? _erro;
-
-  void _concluir() {
-    final x = widget.x;
-    final autor = widget.auxiliar.nome;
-    if (!_confirmou) {
-      setState(() =>
-          _erro = 'Ação bloqueada: confirme no sistema que o atendimento foi realizado.');
-      dados.log('Conclusão bloqueada sem confirmação: ${x.cliente.nome} (#${x.id})', x.area, autor);
-      return;
-    }
-    x.status = StatusAtend.concluido;
-    dados.log(
-        'Atendimento concluído: ${x.cliente.nome} (#${x.id}), disponível para lançamento no caixa',
-        x.area,
-        autor);
-    Navigator.pop(context, true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final x = widget.x;
-    return AlertDialog(
-      title: const Text('Concluir atendimento'),
-      content: SizedBox(
-        width: 400,
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${x.cliente.nome} • ${x.servico}',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          CheckboxListTile(
-            value: _confirmou,
-            onChanged: (v) => setState(() => _confirmou = v ?? false),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Confirmo que o atendimento foi realizado.'),
-          ),
-          if (_erro != null)
-            Text(_erro!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        ]),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-        FilledButton(onPressed: _concluir, child: const Text('Concluir')),
-      ],
-    );
-  }
 }
 
 // ───────────────────────── Agendar serviço ─────────────────────────
@@ -560,6 +504,11 @@ class PaginaRemarcarCancelar extends StatelessWidget {
       alerta(c, 'Horário inválido', 'Escolha um horário futuro.');
       return;
     }
+    if (!dentroDoExpediente(x.area, n)) {
+      alerta(c, 'Fora do expediente',
+          'O horário escolhido está fora do expediente da ${x.area.nome} (${descricaoExpediente(x.area)}). Escolha outro horário.');
+      return;
+    }
     final ocupado = dados.atendimentos.any((y) =>
         y != x && y.prof == x.prof && y.aberto && y.quando.difference(n).abs().inMinutes < 60);
     if (ocupado) {
@@ -571,6 +520,7 @@ class PaginaRemarcarCancelar extends StatelessWidget {
     x.quando = n;
     x.status = StatusAtend.agendado;
     x.lembrete = StatusLembrete.naoEnviado;
+    x.avisoClinica = 'A clínica remarcou o seu agendamento para ${formatarDataHora(n)}.';
     dados.log(
         'Agendamento #${x.id} remarcado de ${formatarDataHora(antigo)} para ${formatarDataHora(n)} (${x.cliente.nome})',
         _area,
@@ -585,6 +535,7 @@ class PaginaRemarcarCancelar extends StatelessWidget {
         rotulo: 'Cancelar agendamento');
     if (!ok) return;
     x.status = StatusAtend.cancelado;
+    x.avisoClinica = 'A clínica cancelou o seu agendamento de ${formatarDataHora(x.quando)}.';
     dados.log('Agendamento #${x.id} cancelado (${x.cliente.nome}, ${formatarDataHora(x.quando)})',
         _area, _autor);
     if (c.mounted) msg(c, 'Agendamento cancelado. Agenda atualizada.');
@@ -596,7 +547,7 @@ class PaginaRemarcarCancelar extends StatelessWidget {
           ..sort((x, y) => x.quando.compareTo(y.quando));
         return Pagina(
           titulo: 'Remarcar/cancelar serviço – ${_area.nome}',
-          sub: 'Selecione o agendamento e escolha remarcar ou cancelar. O sistema valida a antecedência mínima de 24h; com menos que isso, a ação é bloqueada e o motivo é informado.',
+          sub: 'Selecione o agendamento e escolha alterar, remarcar ou cancelar. O sistema valida a antecedência mínima de 24h e o expediente; com menos que isso, a ação é bloqueada e o motivo é informado. A agenda interna e a página do cliente são atualizadas na hora.',
           filhos: [
             tabela(
               ['Nº', 'Data/hora', 'Cliente', 'Profissional', 'Serviço', 'Status', 'Ações'],
@@ -611,6 +562,11 @@ class PaginaRemarcarCancelar extends StatelessWidget {
                     chipStatus(x.status),
                     Row(mainAxisSize: MainAxisSize.min, children: [
                       IconButton(
+                          tooltip: 'Alterar agendamento',
+                          icon: const Icon(Icons.edit),
+                          onPressed: () =>
+                              alterarAgendamento(c, x, autor: _autor, admin: false)),
+                      IconButton(
                           tooltip: 'Remarcar',
                           icon: const Icon(Icons.edit_calendar),
                           onPressed: () => _remarcar(c, x)),
@@ -622,276 +578,7 @@ class PaginaRemarcarCancelar extends StatelessWidget {
                   ]
               ],
             ),
-          ],
-        );
-      });
-}
-
-// ───────────────────────── Lançar valor no caixa ─────────────────────────
-
-String _descAtendimento(Atend x) => '#${x.id} • ${x.cliente.nome} • ${x.servico}';
-
-class PaginaLancarValor extends StatefulWidget {
-  const PaginaLancarValor(this.auxiliar, {super.key});
-
-  final Usuario auxiliar;
-
-  @override
-  State<PaginaLancarValor> createState() => _PaginaLancarValorState();
-}
-
-class _PaginaLancarValorState extends State<PaginaLancarValor> {
-  final _valor = TextEditingController();
-  Atend? _sel;
-  String _forma = formasPagamento.first;
-  String? _erro;
-
-  Area get _area => widget.auxiliar.area;
-  String get _autor => widget.auxiliar.nome;
-
-  @override
-  void dispose() {
-    _valor.dispose();
-    super.dispose();
-  }
-
-  void _lancar() {
-    final pend = dados.pendentes(_area);
-    final sel = pend.contains(_sel) ? _sel : null;
-    if (sel == null) {
-      setState(() => _erro =
-          'Ação bloqueada: selecione um atendimento concluído. Não é possível lançar valor avulso.');
-      dados.log('Lançamento avulso bloqueado: nenhum atendimento concluído selecionado', _area, _autor);
-      return;
-    }
-    final v = parseCentavos(_valor.text);
-    if (v == null || v <= 0) {
-      setState(() => _erro = 'Informe um valor válido.');
-      return;
-    }
-    sel.valorCentavos = v;
-    sel.forma = _forma;
-    dados.log(
-        'Valor lançado: ${formatarReais(v)} ($_forma) vinculado ao atendimento #${sel.id}',
-        _area,
-        _autor);
-    _valor.clear();
-    setState(() {
-      _sel = null;
-      _erro = null;
-    });
-    msg(context, 'Valor lançado e disponível para o fechamento de caixa.');
-  }
-
-  @override
-  Widget build(BuildContext context) => Obs((c) {
-        final pend = dados.pendentes(_area);
-        final hoje = dados.lancadosHoje(_area);
-        return Pagina(
-          titulo: 'Lançar valor no caixa – ${_area.nome}',
-          sub: 'Selecione o atendimento concluído, informe o valor recebido e a forma de pagamento. O sistema vincula o lançamento ao atendimento; valor avulso, sem atendimento, é bloqueado.',
-          filhos: [
-            if (pend.isEmpty)
-              Card(
-                color: Colors.orange.shade50,
-                child: const ListTile(
-                  leading: Icon(Icons.info_outline, color: Colors.orange),
-                  title: Text('Nenhum atendimento concluído aguardando lançamento'),
-                  subtitle: Text(
-                      'Não é possível lançar valor avulso. Conclua o atendimento antes de lançar o valor.'),
-                ),
-              )
-            else
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Wrap(spacing: 16, runSpacing: 16, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                      SizedBox(
-                          width: 340,
-                          child: seletor<Atend>('Atendimento concluído',
-                              pend.contains(_sel) ? _sel : null, pend,
-                              (v) => setState(() => _sel = v), _descAtendimento)),
-                      SizedBox(
-                          width: 200,
-                          child: TextField(
-                            controller: _valor,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            decoration: decoracaoCampo('Valor recebido (R\$)'),
-                          )),
-                      SizedBox(
-                          width: 240,
-                          child: seletor<String>('Forma de pagamento', _forma, formasPagamento,
-                              (v) => setState(() => _forma = v!))),
-                    ]),
-                    if (_erro != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(_erro!, style: TextStyle(color: Theme.of(c).colorScheme.error)),
-                      ),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: _lancar,
-                      icon: const Icon(Icons.add_card),
-                      label: const Text('Lançar valor'),
-                    ),
-                  ]),
-                ),
-              ),
-            const SizedBox(height: 24),
-            Text('Lançamentos de hoje', style: Theme.of(c).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            tabela(
-              ['Hora', 'Cliente / atendimento', 'Forma', 'Valor'],
-              [
-                for (final x in hoje)
-                  [
-                    Text(formatarHora(x.quando)),
-                    Text('${x.cliente.nome} • ${x.servico}'),
-                    Text(x.forma ?? ''),
-                    Text(formatarReais(x.valorCentavos)),
-                  ]
-              ],
-            ),
-          ],
-        );
-      });
-}
-
-// ───────────────────────── Fechar caixa diário ─────────────────────────
-
-class PaginaFecharCaixa extends StatelessWidget {
-  const PaginaFecharCaixa(this.auxiliar, {super.key});
-
-  final Usuario auxiliar;
-
-  Area get _area => auxiliar.area;
-  String get _autor => auxiliar.nome;
-
-  void _vincular(BuildContext c, Avulso av) {
-    final pend = dados.pendentes(_area);
-    if (pend.isEmpty) {
-      alerta(c, 'Sem atendimento para vincular',
-          'Não há atendimento concluído aguardando lançamento.');
-      return;
-    }
-    var escolhido = pend.first;
-    showDialog(
-      context: c,
-      builder: (_) => StatefulBuilder(
-        builder: (d, set) => AlertDialog(
-          title: Text('Vincular ${formatarReais(av.valorCentavos)} (${av.forma})'),
-          content: SizedBox(
-            width: 400,
-            child: seletor<Atend>('Atendimento', escolhido, pend,
-                (v) => set(() => escolhido = v!), _descAtendimento),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(d), child: const Text('Cancelar')),
-            FilledButton(
-              onPressed: () {
-                escolhido.valorCentavos = av.valorCentavos;
-                escolhido.forma = av.forma;
-                dados.avulsos.remove(av);
-                dados.log(
-                    'Valor sem vínculo ${formatarReais(av.valorCentavos)} vinculado ao atendimento #${escolhido.id}',
-                    _area,
-                    _autor);
-                Navigator.pop(d);
-              },
-              child: const Text('Vincular'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _fechar(BuildContext c) async {
-    final chave = dados.chaveCaixa(_area);
-    if (dados.fechamentos.containsKey(chave)) {
-      msg(c, 'O caixa de hoje já foi fechado.');
-      return;
-    }
-    final av = dados.avulsosDe(_area);
-    if (av.isNotEmpty) {
-      final soma = av.fold(0, (s, v) => s + v.valorCentavos);
-      alerta(c, 'Fechamento impedido',
-          'Existe valor sem vínculo a atendimento (${formatarReais(soma)}). O sistema impede o fechamento até a correção: vincule o valor a um atendimento.');
-      dados.log('Fechamento de caixa impedido: valor sem vínculo ${formatarReais(soma)}', _area, _autor);
-      return;
-    }
-    final total = dados.totalDia(_area);
-    final pend = dados.pendentes(_area).length;
-    final aviso = pend > 0
-        ? '\n\nAtenção: há $pend atendimento(s) concluído(s) ainda sem valor lançado.'
-        : '';
-    final anexos = await showDialog<List<Comprovante>>(
-      context: c,
-      builder: (_) => FecharCaixaDialog(
-          resumo:
-              '${dados.lancadosHoje(_area).length} lançamento(s) • Total do dia: ${formatarReais(total)}$aviso'),
-    );
-    if (anexos == null) return;
-    dados.comprovantes[chave] = anexos;
-    dados.fechamentos[chave] = total;
-    final extra = anexos.isEmpty ? '' : ' • ${anexos.length} comprovante(s) anexado(s)';
-    dados.log('Caixa diário fechado: total ${formatarReais(total)}$extra', _area, _autor);
-    if (c.mounted) msg(c, 'Caixa fechado. Total consolidado: ${formatarReais(total)}.');
-  }
-
-  @override
-  Widget build(BuildContext context) => Obs((c) {
-        final hoje = dados.lancadosHoje(_area);
-        final av = dados.avulsosDe(_area);
-        final fechado = dados.fechamentos[dados.chaveCaixa(_area)];
-        return Pagina(
-          titulo: 'Fechar caixa diário – ${_area.nome}',
-          sub: 'Confira os valores lançados no dia, vinculados a atendimentos, e confirme o fechamento. Se existir valor sem vínculo, o sistema impede o fechamento até a correção.',
-          acoes: [
-            FilledButton.icon(
-                onPressed: () => _fechar(c),
-                icon: const Icon(Icons.lock),
-                label: const Text('Fechar caixa')),
-          ],
-          filhos: [
-            Wrap(spacing: 16, runSpacing: 16, children: [
-              kpi(Icons.payments, 'Total lançado hoje', formatarReais(dados.totalDia(_area)), Colors.green),
-              kpi(Icons.receipt_long, 'Lançamentos hoje', '${hoje.length}', Colors.blue),
-              kpi(Icons.link_off, 'Sem vínculo', '${av.length}', av.isEmpty ? Colors.grey : Colors.red),
-              kpi(
-                  fechado == null ? Icons.lock_open : Icons.lock,
-                  'Situação',
-                  fechado == null ? 'Aberto' : 'Fechado ${formatarReais(fechado)}',
-                  fechado == null ? Colors.orange : Colors.green),
-            ]),
-            ...secaoComprovantes(c, dados.chaveCaixa(_area)),
-            const SizedBox(height: 24),
-            Text('Valores lançados hoje', style: Theme.of(c).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            tabela(
-              ['Hora', 'Cliente / atendimento', 'Forma', 'Valor', 'Vínculo', 'Ação'],
-              [
-                for (final x in hoje)
-                  [
-                    Text(formatarHora(x.quando)),
-                    Text('${x.cliente.nome} • ${x.servico}'),
-                    Text(x.forma ?? ''),
-                    Text(formatarReais(x.valorCentavos)),
-                    chipRotulo('Atendimento #${x.id}', Colors.green, icone: Icons.link),
-                    const Text('—'),
-                  ],
-                for (final v in av)
-                  [
-                    Text(formatarHora(v.data)),
-                    const Text('Valor avulso'),
-                    Text(v.forma),
-                    Text(formatarReais(v.valorCentavos)),
-                    chipRotulo('SEM VÍNCULO', Colors.red, icone: Icons.link_off),
-                    TextButton(onPressed: () => _vincular(c, v), child: const Text('Vincular')),
-                  ],
-              ],
-            ),
+            ...secaoAlteracoesAgenda(c, _area),
           ],
         );
       });
@@ -937,7 +624,9 @@ class _AuxiliarLoginPageState extends State<AuxiliarLoginPage> {
     final email = _email.text.trim().toLowerCase();
     final auxiliar = dados.usuarios
         .where((u) =>
-            u.perfil == Perfil.auxiliar && u.ativo && u.contato.toLowerCase() == email)
+            u.perfil == Perfil.auxiliar &&
+            u.ativo &&
+            (u.email?.toLowerCase() == email || u.contato.toLowerCase() == email))
         .firstOrNull;
     if (auxiliar != null && _senha.text == senhaDemoAuxiliar) {
       _tentativas = 0;
@@ -961,9 +650,12 @@ class _AuxiliarLoginPageState extends State<AuxiliarLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return FundoSuave(
+      cores: [Area.estetica.corClara, Area.psicologia.corClara],
+      child: Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: barra(acoes: [
-        if (telaEstreita(context))
+        if (ehCelular(context))
           IconButton(
               tooltip: 'Voltar',
               icon: const Icon(Icons.arrow_back),
@@ -982,7 +674,7 @@ class _AuxiliarLoginPageState extends State<AuxiliarLoginPage> {
             child: Card(
               elevation: 6,
               child: Padding(
-                padding: EdgeInsets.all(telaEstreita(context) ? 20 : 32),
+                padding: EdgeInsets.all(ehCelular(context) ? 20 : 32),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1022,6 +714,7 @@ class _AuxiliarLoginPageState extends State<AuxiliarLoginPage> {
           ),
         ),
       ),
+    ),
     );
   }
 }

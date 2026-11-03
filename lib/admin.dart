@@ -1,9 +1,9 @@
-import 'dart:typed_data';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'caixa.dart';
 import 'main.dart';
+import 'recepcao.dart';
 
 // ───── admin/constantes.dart ─────
 // TODO: em produção, valide o login do administrador no backend.
@@ -11,54 +11,50 @@ import 'main.dart';
 const admLogin = 'adm unipora';
 const admSenha = 'Unipora5adm';
 
+const navy = Color(0xFF00085E);
+
 // DEMO: senha de teste do login do auxiliar. TODO: remover quando houver backend.
 const senhaDemoAuxiliar = 'auxiliar123';
 
-const navy = Color(0xFF00085E);
 
-/// Barra lateral: azul bem clarinho; opção selecionada: azul mais escuro.
-const azulClaro = Color(0xFFEAF3FC);
-const azulSelecionado = Color(0xFFB4D2F3);
+/// Procedimento oferecido por uma área. Valor em centavos (null = ainda não definido).
+class Procedimento {
+  const Procedimento(this.nome, [this.valorCentavos]);
 
-/// Cores do cabeçalho e da barra lateral por área:
-/// Psicologia = azul clarinho; Estética = rosa clarinho.
-extension AreaTemaAdmin on Area {
-  Color get fundoClaro => switch (this) {
-        Area.psicologia => azulClaro,
-        Area.estetica => const Color(0xFFFDEEF5),
-      };
-
-  Color get fundoSelecionado => switch (this) {
-        Area.psicologia => azulSelecionado,
-        Area.estetica => const Color(0xFFF6C3DC),
-      };
-
-  Color get textoSelecionado => switch (this) {
-        Area.psicologia => navy,
-        Area.estetica => const Color(0xFF8A1450),
-      };
-
-  Color get bordaClara => switch (this) {
-        Area.psicologia => const Color(0xFFD6E4F5),
-        Area.estetica => const Color(0xFFF3D3E4),
-      };
+  final String nome;
+  final int? valorCentavos;
 }
 
-const formasPagamento = ['Pix', 'Cartão de débito', 'Cartão de crédito'];
-
-List<String> servicosDe(Area a) => switch (a) {
-      Area.estetica => [
-          'Limpeza de pele',
-          'Drenagem linfática',
-          'Massagem relaxante',
-          'Design de sobrancelhas',
+/// Lista oficial de procedimentos e valores. Altere aqui para atualizar o app todo.
+List<Procedimento> procedimentosDe(Area a) => switch (a) {
+      Area.estetica => const [
+          Procedimento('Limpeza de pele', 5000),
+          Procedimento('Massagem relaxante', 4000),
+          Procedimento('Massagem modeladora', 4000),
+          Procedimento('Drenagem linfática', 4000),
+          Procedimento('Design de sobrancelha', 3000),
+          Procedimento('Lavagem + escova + corte', 5000),
+          Procedimento('Lavagem + escova', 3000),
+          Procedimento('Lavagem + corte', 3000),
+          Procedimento('Spa dos pés', 3000),
         ],
-      Area.psicologia => [
-          'Triagem inicial',
-          'Consulta individual',
-          'Avaliação psicológica',
+      // TODO: trocar pela lista oficial de Psicologia (com valores, se houver).
+      Area.psicologia => const [
+          Procedimento('Triagem inicial'),
+          Procedimento('Consulta individual'),
+          Procedimento('Avaliação psicológica'),
         ],
     };
+
+List<String> servicosDe(Area a) => [for (final p in procedimentosDe(a)) p.nome];
+
+/// Valor (centavos) do procedimento pelo nome, ou null se não houver.
+int? valorDoProcedimento(Area a, String nome) {
+  for (final p in procedimentosDe(a)) {
+    if (p.nome == nome) return p.valorCentavos;
+  }
+  return null;
+}
 
 // ───── admin/models.dart ─────
 enum Perfil { atendente, auxiliar, cliente }
@@ -74,6 +70,13 @@ class Usuario {
   Perfil perfil;
   final Area area;
   bool ativo = true;
+
+  /// Dados do autocadastro do cliente.
+  String? email, cpf, senha, responsavel, observacoes;
+  DateTime? nascimento;
+  bool aceitaLembretes = true;
+
+  String get primeiroNome => nome.trim().split(' ').first;
 }
 
 enum StatusAtend { agendado, confirmado, emAtendimento, concluido, ausente, cancelado }
@@ -135,36 +138,35 @@ class Atend {
     this.servico,
     this.quando,
     this.status, {
-    this.valorCentavos = 0,
-    this.forma,
     this.lembrete = StatusLembrete.naoEnviado,
   });
 
   final int id;
   final Area area;
-  final Usuario cliente, prof;
-  final String servico;
+  final Usuario cliente;
+  Usuario prof;
+  String servico;
   DateTime quando;
   StatusAtend status;
   StatusLembrete lembrete;
-  int valorCentavos;
-  String? forma;
+
+  /// Aviso da clínica para o cliente (alteração, remarcação ou cancelamento feitos pela equipe).
+  /// Aparece na página do cliente até ele marcar "Ciente".
+  String? avisoClinica;
 
   bool get aberto =>
       status == StatusAtend.agendado || status == StatusAtend.confirmado;
 
+  /// Lançamentos válidos (não estornados) deste atendimento no caixa.
+  List<Lancamento> get pagamentos =>
+      dados.lancamentos.where((l) => l.atend == this && !l.estornado).toList();
+
   /// Já tem valor lançado no caixa?
-  bool get lancado => forma != null;
-}
+  bool get lancado => pagamentos.isNotEmpty;
 
-/// Valor lançado sem vínculo a atendimento (impede fechar o caixa).
-class Avulso {
-  Avulso(this.area, this.valorCentavos, this.forma, this.data);
+  int get valorPago => pagamentos.fold(0, (s, l) => s + l.valorCentavos);
 
-  final Area area;
-  final int valorCentavos;
-  final String forma;
-  final DateTime data;
+  String get formasPagas => {for (final l in pagamentos) l.forma.rotulo}.join(' + ');
 }
 
 // ───── admin/dados.dart ─────
@@ -179,16 +181,13 @@ class Dados extends ChangeNotifier {
   final usuarios = <Usuario>[];
   final triagem = <String>[];
   final atendimentos = <Atend>[];
-  final avulsos = <Avulso>[];
+  final lancamentos = <Lancamento>[];
 
   /// ids de clientes liberados pelo administrador após 3 faltas.
   final liberados = <int>{};
 
-  /// chave do caixa do dia → total fechado (centavos).
-  final fechamentos = <String, int>{};
-
-  /// chave do caixa do dia → comprovantes de pagamento anexados no fechamento.
-  final comprovantes = <String, List<Comprovante>>{};
+  /// Fechamentos do caixa (inclui os reabertos, para o histórico).
+  final fechamentos = <Fechamento>[];
 
   final _logs = <String>[];
   int _seq = 100;
@@ -198,10 +197,9 @@ class Dados extends ChangeNotifier {
   /// Log somente de leitura (só é possível adicionar registros).
   List<String> get logs => List.unmodifiable(_logs);
 
-  /// [autor]: quem fez a ação (padrão: administrador).
-  void log(String acao, [Area? area, String? autor]) {
+  void log(String acao, [Area? area, String? ator]) {
     final tag = area == null ? '' : '[${area.nome}] ';
-    _logs.insert(0, '${formatarDataHora(DateTime.now())} • ${autor ?? admLogin} • $tag$acao');
+    _logs.insert(0, '${formatarDataHora(DateTime.now())} • ${ator ?? admLogin} • $tag$acao');
     if (_logs.length > _maxLogs) _logs.removeLast();
     notifyListeners();
   }
@@ -212,8 +210,12 @@ class Dados extends ChangeNotifier {
 
   List<Atend> doArea(Area a) => atendimentos.where((x) => x.area == a).toList();
 
+  /// Clientes ativos da área (cadastrados nela ou que já agendaram nela).
   List<Usuario> clientes(Area a) => usuarios
-      .where((u) => u.area == a && u.perfil == Perfil.cliente && u.ativo)
+      .where((u) =>
+          u.perfil == Perfil.cliente &&
+          u.ativo &&
+          (u.area == a || atendimentos.any((x) => x.cliente == u && x.area == a)))
       .toList();
 
   List<Usuario> profissionais(Area a) => usuarios
@@ -231,25 +233,60 @@ class Dados extends ChangeNotifier {
           (x.cliente == u || x.prof == u))
       .length;
 
+  /// Atendimentos concluídos que ainda não têm lançamento no caixa.
   List<Atend> pendentes(Area a) => atendimentos
       .where((x) => x.area == a && x.status == StatusAtend.concluido && !x.lancado)
       .toList();
 
-  List<Atend> lancadosHoje(Area a) => atendimentos
-      .where((x) => x.area == a && x.lancado && mesmoDia(x.quando, DateTime.now()))
+  List<Lancamento> lancamentosDoDia(Area a, DateTime dia, {bool incluirEstornados = true}) =>
+      lancamentos
+          .where((l) =>
+              l.area == a && mesmoDia(l.data, dia) && (incluirEstornados || !l.estornado))
+          .toList()
+        ..sort((x, y) => x.data.compareTo(y.data));
+
+  /// Lançamentos sem vínculo (de um dia, ou de todos os dias se [dia] for null).
+  List<Lancamento> semVinculoDe(Area a, [DateTime? dia]) => lancamentos
+      .where((l) => l.area == a && l.semVinculo && (dia == null || mesmoDia(l.data, dia)))
       .toList();
 
-  List<Avulso> avulsosDe(Area a) => avulsos.where((v) => v.area == a).toList();
+  int totalDoDia(Area a, DateTime dia) => lancamentosDoDia(a, dia, incluirEstornados: false)
+      .fold(0, (s, l) => s + l.valorCentavos);
 
-  int totalDia(Area a) => lancadosHoje(a).fold(0, (s, x) => s + x.valorCentavos);
+  int totalDia(Area a) => totalDoDia(a, DateTime.now());
 
-  String chaveCaixa(Area a) => '${a.name}-${formatarData(DateTime.now())}';
+  /// Fechamento em vigor do dia (ignora os reabertos).
+  Fechamento? fechamentoDe(Area a, DateTime dia) {
+    for (final f in fechamentos) {
+      if (f.area == a && !f.reaberto && mesmoDia(f.dia, dia)) return f;
+    }
+    return null;
+  }
+
+  bool caixaFechado(Area a, DateTime dia) => fechamentoDe(a, dia) != null;
+
+  Usuario? clientePorEmail(String email) {
+    final e = email.trim().toLowerCase();
+    for (final u in usuarios) {
+      if (u.perfil == Perfil.cliente && u.email?.toLowerCase() == e) return u;
+    }
+    return null;
+  }
+
+  /// E-mail, CPF (só dígitos) ou telefone já cadastrados?
+  bool cadastroDuplicado({required String email, required String cpf, required String telefone}) {
+    final e = email.trim().toLowerCase();
+    return usuarios.any((u) =>
+        (u.email != null && u.email!.toLowerCase() == e) ||
+        (u.cpf != null && u.cpf == cpf) ||
+        u.contato == telefone);
+  }
 
   // ───────── dados de exemplo ─────────
 
   void _semear() {
     final ana = Usuario('Ana Souza', Perfil.atendente, 'ana@email.com', Area.estetica);
-    final bia = Usuario('Bia Costa', Perfil.auxiliar, 'bia@email.com', Area.estetica);
+    final bia = Usuario('Bia Costa', Perfil.auxiliar, '(64) 99911-2233', Area.estetica);
     final julia = Usuario('Julia Rocha', Perfil.cliente, '(64) 99100-0001', Area.estetica);
     final fernanda = Usuario('Fernanda Lima', Perfil.cliente, '(64) 99100-0002', Area.estetica);
     final renata = Usuario('Renata Dias', Perfil.cliente, '(64) 99100-0003', Area.estetica);
@@ -259,8 +296,18 @@ class Dados extends ChangeNotifier {
     final joao = Usuario('João Pereira', Perfil.cliente, '(64) 99200-0002', Area.psicologia);
     final luiza = Usuario('Luiza Prado', Perfil.cliente, '(64) 99200-0003', Area.psicologia);
     final maria = Usuario('Maria Santos', Perfil.cliente, '(64) 99200-0004', Area.psicologia);
-    final carla = Usuario('Carla Mendes', Perfil.auxiliar, 'carla@email.com', Area.psicologia);
+    final carla = Usuario('Carla Mendes', Perfil.auxiliar, '(64) 99933-4455', Area.psicologia);
     usuarios.addAll([ana, bia, julia, fernanda, renata, paula, rafael, marina, joao, luiza, maria, carla]);
+
+    // E-mails de acesso dos auxiliares (login do auxiliar; senha de demonstração em senhaDemoAuxiliar).
+    bia.email = 'bia@email.com';
+    carla.email = 'carla@email.com';
+
+    // Contas de DEMONSTRAÇÃO para testar o login do cliente (apague em produção).
+    julia.email = 'julia@email.com';
+    julia.senha = 'Cliente123';
+    marina.email = 'marina@email.com';
+    marina.senha = 'Cliente123';
 
     triagem.addAll([
       'Maria Santos • chegada 14:05',
@@ -270,17 +317,15 @@ class Dados extends ChangeNotifier {
 
     const e = Area.estetica, p = Area.psicologia;
     atendimentos.addAll([
-      Atend(1, e, julia, ana, 'Limpeza de pele', hojeAs(9), StatusAtend.concluido,
-          valorCentavos: 15000, forma: 'Pix'),
+      Atend(1, e, julia, ana, 'Limpeza de pele', hojeAs(9), StatusAtend.concluido),
       Atend(2, e, fernanda, bia, 'Massagem relaxante', hojeAs(10), StatusAtend.concluido),
-      Atend(3, e, renata, ana, 'Design de sobrancelhas', emHoras(-30), StatusAtend.ausente),
+      Atend(3, e, renata, ana, 'Design de sobrancelha', emHoras(-30), StatusAtend.ausente),
       Atend(4, e, renata, bia, 'Drenagem linfática', emHoras(-120), StatusAtend.ausente),
       Atend(5, e, renata, ana, 'Limpeza de pele', emHoras(-200), StatusAtend.ausente),
       Atend(6, e, julia, bia, 'Drenagem linfática', emHoras(30), StatusAtend.confirmado,
           lembrete: StatusLembrete.confirmado),
       Atend(7, e, fernanda, ana, 'Limpeza de pele', emHoras(52), StatusAtend.agendado),
-      Atend(8, p, marina, paula, 'Consulta individual', hojeAs(8), StatusAtend.concluido,
-          valorCentavos: 12000, forma: 'Pix'),
+      Atend(8, p, marina, paula, 'Consulta individual', hojeAs(8), StatusAtend.concluido),
       Atend(9, p, joao, rafael, 'Triagem inicial', emHoras(-1), StatusAtend.emAtendimento),
       Atend(10, p, luiza, paula, 'Consulta individual', emHoras(40), StatusAtend.confirmado,
           lembrete: StatusLembrete.confirmado),
@@ -290,11 +335,73 @@ class Dados extends ChangeNotifier {
       Atend(13, p, joao, paula, 'Consulta individual', emHoras(3), StatusAtend.agendado,
           lembrete: StatusLembrete.enviado),
       Atend(14, p, maria, paula, 'Triagem inicial', emHoras(-5), StatusAtend.agendado),
-      Atend(15, e, fernanda, ana, 'Massagem relaxante', emHoras(-1), StatusAtend.emAtendimento),
-      Atend(16, p, luiza, paula, 'Consulta individual', emHoras(-1), StatusAtend.emAtendimento),
+      // Atendimentos de dias anteriores (para consultar caixas passados).
+      Atend(15, e, julia, ana, 'Limpeza de pele', diasAtras(1, 9), StatusAtend.concluido),
+      Atend(16, e, fernanda, bia, 'Massagem modeladora', diasAtras(1, 11), StatusAtend.concluido),
+      Atend(17, e, renata, ana, 'Spa dos pés', diasAtras(2, 15), StatusAtend.concluido),
+      Atend(18, p, luiza, paula, 'Consulta individual', diasAtras(1, 14), StatusAtend.concluido),
+      Atend(19, p, maria, rafael, 'Consulta individual', diasAtras(2, 10), StatusAtend.concluido),
     ]);
 
-    avulsos.add(Avulso(Area.estetica, 8000, 'Pix', DateTime.now()));
+    // Caixa: lançamentos de exemplo (hoje e dias anteriores).
+    Atend at(int id) => atendimentos.firstWhere((x) => x.id == id);
+    void lanc(Area area, DateTime data, int valor, FormaPagamento forma,
+        {int? atend,
+        OrigemLancamento origem = OrigemLancamento.manual,
+        String? aut,
+        String? bandeira,
+        int parcelas = 1}) {
+      lancamentos.add(Lancamento(
+        id: proximoId(),
+        area: area,
+        data: data,
+        valorCentavos: valor,
+        forma: forma,
+        origem: origem,
+        operador: admLogin,
+        atend: atend == null ? null : at(atend),
+        parcelas: parcelas,
+        bandeira: bandeira,
+        autorizacao: aut,
+      )..registrar('Lançamento de exemplo'));
+    }
+
+    lanc(e, hojeAs(9), 5000, FormaPagamento.pix, atend: 1);
+    lanc(p, hojeAs(8), 12000, FormaPagamento.pix, atend: 8);
+    // Venda da maquininha SEM vínculo: aparece para você vincular no caixa.
+    lanc(e, DateTime.now(), 8000, FormaPagamento.debito,
+        origem: OrigemLancamento.maquininha, aut: '482913', bandeira: 'Visa');
+    lanc(e, diasAtras(1, 9), 5000, FormaPagamento.pix, atend: 15);
+    lanc(e, diasAtras(1, 11), 4000, FormaPagamento.debito,
+        atend: 16, origem: OrigemLancamento.maquininha, aut: '771204', bandeira: 'Mastercard');
+    lanc(e, diasAtras(2, 15), 3000, FormaPagamento.pix, atend: 17);
+    lanc(p, diasAtras(1, 14), 12000, FormaPagamento.pix, atend: 18);
+    lanc(p, diasAtras(2, 10), 12000, FormaPagamento.credito,
+        atend: 19, origem: OrigemLancamento.maquininha, aut: '330918', bandeira: 'Elo', parcelas: 2);
+
+    void fecha(Area area, int dias, Map<FormaPagamento, int> totais,
+        Map<FormaPagamento, int?> conferidos, int qtd, [String? obs]) {
+      final d = diasAtras(dias, 0);
+      fechamentos.add(Fechamento(
+        area: area,
+        dia: d,
+        fechadoEm: DateTime(d.year, d.month, d.day, 18, 5),
+        responsavel: admLogin,
+        qtd: qtd,
+        totais: totais,
+        conferidos: conferidos,
+        estornosQtd: 0,
+        estornosValor: 0,
+        observacao: obs,
+      ));
+    }
+
+    const px = FormaPagamento.pix, db = FormaPagamento.debito, cr = FormaPagamento.credito;
+    fecha(e, 1, {px: 5000, db: 4000, cr: 0}, {px: 5000, db: 4000, cr: 0}, 2);
+    fecha(e, 2, {px: 3000, db: 0, cr: 0}, {px: 3000, db: 0, cr: 0}, 1);
+    fecha(p, 1, {px: 12000, db: 0, cr: 0}, {px: 11500, db: 0, cr: 0}, 1,
+        'Diferença de R\$ 5,00 no extrato do Pix (tarifa bancária).');
+    fecha(p, 2, {px: 0, db: 0, cr: 12000}, {px: 0, db: 0, cr: 12000}, 1);
   }
 }
 
@@ -320,24 +427,32 @@ Widget chipRotulo(String t, Color cor, {IconData? icone}) {
 
 Widget chipStatus(StatusAtend s) => chipRotulo(s.rotulo, s.cor, icone: s.icone);
 
-Widget kpi(IconData i, String t, String v, Color cor) => SizedBox(
-      width: 220,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(children: [
-            CircleAvatar(backgroundColor: cor.withAlpha(40), child: Icon(i, color: cor)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(v, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                Text(t, style: const TextStyle(fontSize: 12)),
-              ]),
-            ),
-          ]),
+Widget kpi(IconData i, String t, String v, Color cor) => Builder(builder: (context) {
+      final w = MediaQuery.sizeOf(context).width;
+      final cel = w < 600;
+      final largura = cel ? ((w - 24 - 16) / 2).floorToDouble() : 220.0;
+      return SizedBox(
+        width: largura,
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(cel ? 12 : 16),
+            child: Row(children: [
+              CircleAvatar(
+                  radius: cel ? 18 : 20,
+                  backgroundColor: cor.withAlpha(40),
+                  child: Icon(i, color: cor, size: cel ? 20 : 24)),
+              SizedBox(width: cel ? 8 : 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(v, style: TextStyle(fontSize: cel ? 17 : 22, fontWeight: FontWeight.bold)),
+                  Text(t, style: const TextStyle(fontSize: 12)),
+                ]),
+              ),
+            ]),
+          ),
         ),
-      ),
-    );
+      );
+    });
 
 Widget tabela(List<String> cols, List<List<Widget>> linhas) {
   if (linhas.isEmpty) {
@@ -346,20 +461,28 @@ Widget tabela(List<String> cols, List<List<Widget>> linhas) {
             padding: EdgeInsets.all(32),
             child: Center(child: Text('Nenhum registro encontrado.'))));
   }
-  return Card(
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        columns: [
-          for (final c in cols)
-            DataColumn(label: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)))
-        ],
-        rows: [
-          for (final l in linhas) DataRow(cells: [for (final w in l) DataCell(w)])
-        ],
+  return Builder(builder: (context) {
+    final cs = Theme.of(context).colorScheme;
+    final cel = ehCelular(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columnSpacing: cel ? 16 : 28,
+          horizontalMargin: cel ? 12 : 20,
+          headingRowColor: WidgetStatePropertyAll(cs.primaryContainer.withAlpha(110)),
+          columns: [
+            for (final c in cols)
+              DataColumn(label: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)))
+          ],
+          rows: [
+            for (final l in linhas) DataRow(cells: [for (final w in l) DataCell(w)])
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  });
 }
 
 /// Caixa de seleção (dropdown) com rótulo.
@@ -446,7 +569,11 @@ class Pagina extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(padding: EdgeInsets.all(telaEstreita(context) ? 16 : 24), children: [
+    return Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1400),
+            child: ListView(padding: EdgeInsets.all(ehCelular(context) ? 12 : 24), children: [
       Wrap(
         spacing: 16,
         runSpacing: 12,
@@ -457,9 +584,9 @@ class Pagina extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 640),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(titulo,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
+                  style: (ehCelular(context)
+                          ? Theme.of(context).textTheme.titleLarge
+                          : Theme.of(context).textTheme.headlineSmall)
                       ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text(sub),
@@ -470,41 +597,63 @@ class Pagina extends StatelessWidget {
       ),
       const SizedBox(height: 20),
       ...filhos,
-    ]);
+    ]),
+    ),
+    );
   }
 }
 
 /// Barra superior com a logo da Uniporá no canto esquerdo.
-PreferredSizeWidget barra({List<Widget>? acoes, Area? area}) {
+PreferredSizeWidget barra({List<Widget>? acoes}) {
   return AppBar(
     automaticallyImplyLeading: false,
-    backgroundColor: area?.fundoClaro ?? azulClaro,
+    backgroundColor: Colors.transparent,
     surfaceTintColor: Colors.transparent,
     scrolledUnderElevation: 0,
-    shape: Border(bottom: BorderSide(color: area?.bordaClara ?? const Color(0xFFD6E4F5))),
     titleSpacing: 16,
-    title: const Align(
-      alignment: Alignment.centerLeft,
-      child: LogoUnipora(altura: 36),
+    title: Builder(
+      builder: (c) => Align(
+        alignment: Alignment.centerLeft,
+        child: LogoUnipora(altura: ehCelular(c) ? 28 : 36),
+      ),
     ),
     actions: acoes,
   );
 }
 
+/// Botão de sair. Usado pelo administrador (padrão) e pelo auxiliar (com [acao], [area] e [autor]).
 Widget botaoSair(BuildContext context, {String? acao, Area? area, String? autor}) {
   void sair() {
     dados.log(acao ?? 'Logout do administrador', area, autor);
     Navigator.popUntil(context, (r) => r.isFirst);
   }
 
-  if (telaEstreita(context)) {
-    return IconButton(tooltip: 'Sair', icon: const Icon(Icons.logout), onPressed: sair);
+  return ehCelular(context)
+      ? IconButton(tooltip: 'Sair', icon: const Icon(Icons.logout), onPressed: sair)
+      : TextButton.icon(
+          onPressed: sair, icon: const Icon(Icons.logout), label: const Text('Sair'));
+}
+
+/// Fundo em degradê suave (mesmo estilo da tela de login).
+class FundoSuave extends StatelessWidget {
+  const FundoSuave({super.key, required this.cores, required this.child});
+
+  final List<Color> cores;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: cores,
+        ),
+      ),
+      child: child,
+    );
   }
-  return TextButton.icon(
-    onPressed: sair,
-    icon: const Icon(Icons.logout),
-    label: const Text('Sair'),
-  );
 }
 
 // ───── admin/paginas/acesso.dart ─────
@@ -521,6 +670,7 @@ const _matriz = <(String, String)>[
   ('Concluir atendimento de estética', 'TX'),
   ('Agendar serviço', 'TX'),
   ('Remarcar/cancelar serviço', 'TXC'),
+  ('Alterar agendamento (agenda interna)', 'TX'),
 ];
 
 class PaginaAcesso extends StatelessWidget {
@@ -601,6 +751,12 @@ Future<void> _remarcar(BuildContext c, Atend a) async {
   final n = await escolherDataHora(
       c, a.quando.isAfter(DateTime.now()) ? a.quando : emHoras(24));
   if (n == null || !c.mounted) return;
+  if (!dentroDoExpediente(a.area, n)) {
+    final seguir = await confirmar(c, 'Fora do expediente',
+        'O horário escolhido está fora do expediente da ${a.area.nome} (${descricaoExpediente(a.area)}). Remarcar mesmo assim?',
+        rotulo: 'Remarcar mesmo assim');
+    if (!seguir || !c.mounted) return;
+  }
   final conflito = dados.atendimentos.any((x) =>
       x != a && x.prof == a.prof && x.aberto && x.quando.difference(n).abs().inMinutes < 60);
   if (conflito) {
@@ -612,6 +768,7 @@ Future<void> _remarcar(BuildContext c, Atend a) async {
   a.quando = n;
   a.status = StatusAtend.agendado;
   a.lembrete = StatusLembrete.naoEnviado;
+  a.avisoClinica = 'A clínica remarcou o seu agendamento para ${formatarDataHora(n)}.';
   dados.log(
       'Agendamento #${a.id} remarcado de ${formatarDataHora(antigo)} para ${formatarDataHora(n)} (${a.cliente.nome})',
       a.area);
@@ -625,6 +782,7 @@ Future<void> _cancelar(BuildContext c, Atend a) async {
       rotulo: 'Cancelar agendamento');
   if (!ok) return;
   a.status = StatusAtend.cancelado;
+  a.avisoClinica = 'A clínica cancelou o seu agendamento de ${formatarDataHora(a.quando)}.';
   dados.log('Agendamento #${a.id} cancelado (${a.cliente.nome}, ${formatarDataHora(a.quando)})', a.area);
 }
 
@@ -642,7 +800,7 @@ class PaginaAgenda extends StatelessWidget {
           ..sort((x, y) => x.quando.compareTo(y.quando));
         return Pagina(
           titulo: 'Agenda – ${a.nome}',
-          sub: 'Agendar, remarcar e cancelar. O sistema impede conflitos de horário e bloqueia remarcação/cancelamento com menos de 24h (exceção só com sua autorização).',
+          sub: 'Agendar, alterar, remarcar e cancelar. O sistema impede conflitos de horário e bloqueia remarcação/cancelamento com menos de 24h (exceção só com sua autorização). Tudo o que clientes e auxiliares mudam aparece aqui na hora.',
           acoes: [
             FilledButton.icon(
                 onPressed: () => abrirFormAtend(c, a, agendar: true),
@@ -665,6 +823,10 @@ class PaginaAgenda extends StatelessWidget {
                     x.aberto
                         ? Row(mainAxisSize: MainAxisSize.min, children: [
                             IconButton(
+                                tooltip: 'Alterar agendamento',
+                                icon: const Icon(Icons.edit),
+                                onPressed: () => alterarAgendamento(c, x)),
+                            IconButton(
                                 tooltip: 'Remarcar',
                                 icon: const Icon(Icons.edit_calendar),
                                 onPressed: () => _remarcar(c, x)),
@@ -677,9 +839,261 @@ class PaginaAgenda extends StatelessWidget {
                   ]
               ],
             ),
+            ...secaoAlteracoesAgenda(c, a),
           ],
         );
       });
+}
+
+// ───── admin/expediente.dart ─────
+// Horários de atendimento (expediente). Ajuste conforme a rotina da clínica.
+const horaInicioPorArea = {Area.estetica: 9, Area.psicologia: 8};
+const horaFimPorArea = {Area.estetica: 18, Area.psicologia: 17}; // o último horário começa 1h antes
+const horaAlmoco = 12; // sem atendimento nesse horário
+const diasAtendimentoPorArea = {
+  Area.estetica: {1, 2, 3, 4, 5, 6}, // segunda a sábado (1 = segunda)
+  Area.psicologia: {1, 2, 3, 4, 5}, // segunda a sexta
+};
+
+/// Dentro do expediente da área (dias e horários de atendimento)?
+bool dentroDoExpediente(Area a, DateTime h) =>
+    diasAtendimentoPorArea[a]!.contains(h.weekday) &&
+    h.hour >= horaInicioPorArea[a]! &&
+    h.hour < horaFimPorArea[a]! &&
+    h.hour != horaAlmoco;
+
+String descricaoExpediente(Area a) {
+  final dias = diasAtendimentoPorArea[a]!.contains(6) ? 'segunda a sábado' : 'segunda a sexta';
+  return '$dias, das ${horaInicioPorArea[a]}h às ${horaFimPorArea[a]}h, sem atendimento às ${horaAlmoco}h';
+}
+
+/// Horários (de hora em hora) disponíveis no expediente de um dia.
+List<DateTime> horariosDoDia(Area a, DateTime dia) {
+  if (!diasAtendimentoPorArea[a]!.contains(dia.weekday)) return [];
+  return [
+    for (var h = horaInicioPorArea[a]!; h < horaFimPorArea[a]!; h++)
+      if (h != horaAlmoco) DateTime(dia.year, dia.month, dia.day, h),
+  ];
+}
+
+// ───── admin/alterar_agendamento.dart ─────
+/// Alterações recentes da agenda (remarcações, cancelamentos e alterações), feitas por
+/// clientes, auxiliares ou administradores. Vem do log de auditoria.
+List<Widget> secaoAlteracoesAgenda(BuildContext c, Area a) {
+  final l = dados.logs
+      .where((e) =>
+          e.contains('[${a.nome}]') &&
+          e.contains('Agendamento #') &&
+          (e.contains('remarcado') || e.contains('cancelado') || e.contains('alterado')))
+      .take(8)
+      .toList();
+  return [
+    const SizedBox(height: 24),
+    Text('Alterações recentes da agenda', style: Theme.of(c).textTheme.titleMedium),
+    const SizedBox(height: 4),
+    const Text(
+      'Inclui o que clientes, auxiliares e administradores remarcaram, cancelaram ou alteraram.',
+      style: TextStyle(fontSize: 12),
+    ),
+    const SizedBox(height: 8),
+    if (l.isEmpty)
+      const Card(
+          child: Padding(padding: EdgeInsets.all(16), child: Text('Nenhuma alteração recente.')))
+    else
+      Card(
+        child: Column(children: [
+          for (final e in l)
+            ListTile(
+              dense: true,
+              leading: Icon(
+                  e.contains('cancelado')
+                      ? Icons.event_busy
+                      : e.contains('alterado')
+                          ? Icons.edit_calendar
+                          : Icons.update,
+                  size: 20),
+              title: Text(e, style: const TextStyle(fontSize: 13)),
+            ),
+        ]),
+      ),
+  ];
+}
+
+/// Altera um agendamento da agenda interna (profissional, procedimento e/ou horário).
+/// [admin] = false no painel do auxiliar (sem exceções de expediente nem da regra de 24h).
+Future<void> alterarAgendamento(BuildContext c, Atend x, {String? autor, bool admin = true}) async {
+  if (!x.aberto) {
+    alerta(c, 'Agendamento encerrado',
+        'Só é possível alterar agendamentos em aberto (agendados ou confirmados).');
+    return;
+  }
+  final ok = await showDialog<bool>(
+    context: c,
+    builder: (_) => AlterarAgendamentoDialog(x: x, autor: autor, admin: admin),
+  );
+  if (ok == true && c.mounted) {
+    msg(c, 'Agendamento alterado. Agenda atualizada e cliente avisado na página dele.');
+  }
+}
+
+class AlterarAgendamentoDialog extends StatefulWidget {
+  const AlterarAgendamentoDialog({super.key, required this.x, this.autor, this.admin = true});
+
+  final Atend x;
+  final String? autor;
+  final bool admin;
+
+  @override
+  State<AlterarAgendamentoDialog> createState() => _AlterarAgendamentoDialogState();
+}
+
+class _AlterarAgendamentoDialogState extends State<AlterarAgendamentoDialog> {
+  late Usuario _prof = widget.x.prof;
+  late String _serv = widget.x.servico;
+  late DateTime _quando = widget.x.quando;
+  final _motivo = TextEditingController();
+  String? _erro;
+
+  List<Usuario> get _profs {
+    final l = dados.profissionais(widget.x.area);
+    return l.contains(widget.x.prof) ? l : [widget.x.prof, ...l];
+  }
+
+  List<String> get _servs {
+    final l = servicosDe(widget.x.area);
+    return l.contains(widget.x.servico) ? l : [widget.x.servico, ...l];
+  }
+
+  @override
+  void dispose() {
+    _motivo.dispose();
+    super.dispose();
+  }
+
+  Future<void> _salvar() async {
+    final x = widget.x;
+    final m = _motivo.text.trim();
+    final mudouHorario = _quando != x.quando;
+    final mudouProf = _prof != x.prof;
+    final mudouServ = _serv != x.servico;
+
+    if (!mudouHorario && !mudouProf && !mudouServ) {
+      setState(() => _erro = 'Nenhuma alteração foi feita.');
+      return;
+    }
+    if (m.length < 5) {
+      setState(() => _erro = 'Explique o motivo da alteração (mínimo de 5 caracteres).');
+      return;
+    }
+    if (mudouHorario || mudouProf) {
+      if (!_quando.isAfter(DateTime.now())) {
+        setState(() => _erro = 'Escolha um horário futuro.');
+        return;
+      }
+      bool perto(Atend y) => y != x && y.aberto && y.quando.difference(_quando).abs().inMinutes < 60;
+      if (dados.atendimentos.any((y) => perto(y) && y.prof == _prof)) {
+        setState(() => _erro =
+            '${_prof.nome} já tem agendamento próximo a esse horário. Sugestão: ${formatarDataHora(_quando.add(const Duration(hours: 1)))}.');
+        return;
+      }
+      if (dados.atendimentos.any((y) => perto(y) && y.cliente == x.cliente)) {
+        setState(() => _erro = '${x.cliente.nome} já tem outro agendamento nesse horário.');
+        return;
+      }
+    }
+    if (mudouHorario) {
+      // Regra de 24h: só o administrador pode abrir exceção.
+      if (x.quando.difference(DateTime.now()).inHours < 24) {
+        if (!widget.admin) {
+          setState(() => _erro =
+              'Não é possível alterar o horário com menos de 24h de antecedência. Procure o Administrador.');
+          dados.log('Alteração de horário bloqueada (menos de 24h): #${x.id} ${x.cliente.nome}',
+              x.area, widget.autor);
+          return;
+        }
+        if (!await _prazo24h(context, x, 'alteração de horário')) return;
+        if (!mounted) return;
+      }
+      // Expediente: só o administrador pode abrir exceção.
+      if (!dentroDoExpediente(x.area, _quando)) {
+        if (!widget.admin) {
+          setState(() => _erro =
+              'Horário fora do expediente da ${x.area.nome} (${descricaoExpediente(x.area)}).');
+          return;
+        }
+        final seguir = await confirmar(context, 'Fora do expediente',
+            'O horário está fora do expediente (${descricaoExpediente(x.area)}). Alterar mesmo assim?',
+            rotulo: 'Alterar mesmo assim');
+        if (!seguir || !mounted) return;
+      }
+    }
+
+    final partes = <String>[
+      if (mudouProf) 'profissional ${x.prof.nome} → ${_prof.nome}',
+      if (mudouServ) 'procedimento ${x.servico} → $_serv',
+      if (mudouHorario) 'horário ${formatarDataHora(x.quando)} → ${formatarDataHora(_quando)}',
+    ];
+    x.prof = _prof;
+    x.servico = _serv;
+    if (mudouHorario) {
+      x.quando = _quando;
+      x.status = StatusAtend.agendado;
+      x.lembrete = StatusLembrete.naoEnviado;
+    }
+    x.avisoClinica = 'A clínica alterou o seu agendamento: ${partes.join('; ')}.';
+    dados.log('Agendamento #${x.id} alterado (${x.cliente.nome}): ${partes.join('; ')}. Motivo: $m',
+        x.area, widget.autor);
+    Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final x = widget.x;
+    return AlertDialog(
+      title: Text('Alterar agendamento #${x.id}'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${x.cliente.nome} • ${x.area.nome}',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            seletor<Usuario>('Profissional', _prof, _profs,
+                (v) => setState(() => _prof = v!), (u) => u.nome),
+            const SizedBox(height: 12),
+            seletor<String>('Procedimento', _serv, _servs, (v) => setState(() => _serv = v!)),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final n = await escolherDataHora(context, _quando);
+                if (n != null && mounted) setState(() => _quando = n);
+              },
+              icon: const Icon(Icons.schedule),
+              label: Text(formatarDataHora(_quando)),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _motivo,
+              maxLines: 2,
+              decoration: decoracaoCampo('Motivo da alteração (obrigatório)'),
+            ),
+            if (_erro != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(_erro!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+            const SizedBox(height: 8),
+            const Text('O cliente verá o aviso da alteração na página dele.',
+                style: TextStyle(fontSize: 12)),
+          ]),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+        FilledButton(onPressed: _salvar, child: const Text('Salvar alteração')),
+      ],
+    );
+  }
 }
 
 // ───── admin/paginas/atendimentos.dart ─────
@@ -695,21 +1109,8 @@ Future<void> _receber(BuildContext c, Atend x) async {
   dados.log('Cliente recebido para atendimento: ${x.cliente.nome} (#${x.id})', x.area);
 }
 
-Future<void> _concluir(BuildContext c, Atend x) async {
-  final ok = await confirmar(c, 'Concluir atendimento',
-      'Confirma que o serviço de ${x.cliente.nome} (${x.servico}) foi realizado?',
-      rotulo: 'Confirmar realização');
-  if (!ok) {
-    if (c.mounted) {
-      msg(c, 'Conclusão bloqueada: é necessário confirmar que o atendimento foi realizado.');
-    }
-    return;
-  }
-  x.status = StatusAtend.concluido;
-  dados.log(
-      'Atendimento concluído: ${x.cliente.nome} (#${x.id}), disponível para lançamento no caixa',
-      x.area);
-}
+/// Conclusão compartilhada com a recepção e o painel do auxiliar (confirmação obrigatória).
+Future<void> _concluir(BuildContext c, Atend x) => concluirAtendimento(c, x);
 
 class PaginaAtendimentos extends StatefulWidget {
   const PaginaAtendimentos(this.a, {super.key});
@@ -757,7 +1158,7 @@ class _PaginaAtendimentosState extends State<PaginaAtendimentos> {
                     Text(x.servico),
                     chipStatus(x.status),
                     Text(x.lancado
-                        ? '${formatarReais(x.valorCentavos)} (${x.forma})'
+                        ? '${formatarReais(x.valorPago)} (${x.formasPagas})'
                         : (x.status == StatusAtend.concluido ? 'a lançar' : '—')),
                     x.aberto
                         ? TextButton.icon(
@@ -800,7 +1201,7 @@ class _PaginaAuditoriaState extends State<PaginaAuditoria> {
             .toList();
         return Pagina(
           titulo: 'Auditoria – ${widget.a.nome}',
-          sub: 'Registro imutável: usuário responsável, data/hora e detalhes de cada ação (cadastros, cancelamentos, lançamentos, alterações de triagem). Somente leitura.',
+          sub: ' Registro imutável: usuário responsável, data/hora e detalhes de cada ação (cadastros, cancelamentos, lançamentos, alterações de triagem). Somente leitura.',
           filhos: [
             SizedBox(
                 width: 320,
@@ -825,224 +1226,6 @@ class _PaginaAuditoriaState extends State<PaginaAuditoria> {
       });
 }
 
-// ───── admin/paginas/caixa.dart ─────
-String _descAtend(Atend x) => '#${x.id} • ${x.cliente.nome} • ${x.servico}';
-
-/// Lançar valor sobre um atendimento concluído.
-class _LancarValorDialog extends StatefulWidget {
-  const _LancarValorDialog({required this.area, required this.pendentes});
-
-  final Area area;
-  final List<Atend> pendentes;
-
-  @override
-  State<_LancarValorDialog> createState() => _LancarValorDialogState();
-}
-
-class _LancarValorDialogState extends State<_LancarValorDialog> {
-  final _valor = TextEditingController();
-  late Atend _sel = widget.pendentes.first;
-  String _forma = formasPagamento.first;
-  String? _erro;
-
-  @override
-  void dispose() {
-    _valor.dispose();
-    super.dispose();
-  }
-
-  void _lancar() {
-    final v = parseCentavos(_valor.text);
-    if (v == null || v <= 0) {
-      setState(() => _erro = 'Informe um valor válido e o atendimento.');
-      return;
-    }
-    _sel.valorCentavos = v;
-    _sel.forma = _forma;
-    dados.log(
-        'Valor lançado: ${formatarReais(v)} ($_forma) vinculado ao atendimento #${_sel.id}',
-        widget.area);
-    Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Lançar valor no caixa'),
-      content: SizedBox(
-        width: 400,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          seletor<Atend>('Atendimento concluído', _sel, widget.pendentes,
-              (v) => setState(() => _sel = v!), _descAtend),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _valor,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: decoracaoCampo('Valor recebido (R\$)'),
-          ),
-          const SizedBox(height: 12),
-          seletor<String>('Forma de pagamento', _forma, formasPagamento,
-              (v) => setState(() => _forma = v!)),
-          if (_erro != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(_erro!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ),
-        ]),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-        FilledButton(onPressed: _lancar, child: const Text('Lançar')),
-      ],
-    );
-  }
-}
-
-class PaginaCaixa extends StatelessWidget {
-  const PaginaCaixa(this.a, {super.key});
-
-  final Area a;
-
-  void _lancar(BuildContext c) {
-    final pend = dados.pendentes(a);
-    if (pend.isEmpty) {
-      alerta(c, 'Lançamento bloqueado',
-          'Não é possível lançar valor avulso. Selecione um atendimento concluído. Não há atendimentos concluídos aguardando lançamento.');
-      return;
-    }
-    showDialog(
-        context: c, builder: (_) => _LancarValorDialog(area: a, pendentes: pend));
-  }
-
-  void _vincular(BuildContext c, Avulso av) {
-    final pend = dados.pendentes(a);
-    if (pend.isEmpty) {
-      alerta(c, 'Sem atendimento para vincular',
-          'Não há atendimento concluído aguardando lançamento.');
-      return;
-    }
-    var escolhido = pend.first;
-    showDialog(
-      context: c,
-      builder: (_) => StatefulBuilder(
-        builder: (d, set) => AlertDialog(
-          title: Text('Vincular ${formatarReais(av.valorCentavos)} (${av.forma})'),
-          content: SizedBox(
-            width: 400,
-            child: seletor<Atend>('Atendimento', escolhido, pend,
-                (v) => set(() => escolhido = v!), _descAtend),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(d), child: const Text('Cancelar')),
-            FilledButton(
-              onPressed: () {
-                escolhido.valorCentavos = av.valorCentavos;
-                escolhido.forma = av.forma;
-                dados.avulsos.remove(av);
-                dados.log(
-                    'Valor sem vínculo ${formatarReais(av.valorCentavos)} vinculado ao atendimento #${escolhido.id}',
-                    a);
-                Navigator.pop(d);
-              },
-              child: const Text('Vincular'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _fechar(BuildContext c) async {
-    final chave = dados.chaveCaixa(a);
-    if (dados.fechamentos.containsKey(chave)) {
-      msg(c, 'O caixa de hoje já foi fechado.');
-      return;
-    }
-    final av = dados.avulsosDe(a);
-    if (av.isNotEmpty) {
-      final soma = av.fold(0, (s, v) => s + v.valorCentavos);
-      alerta(c, 'Fechamento impedido',
-          'Existe valor sem vínculo a atendimento (${formatarReais(soma)}). Corrija (vincule) antes de fechar o caixa.');
-      return;
-    }
-    final total = dados.totalDia(a);
-    final anexos = await showDialog<List<Comprovante>>(
-      context: c,
-      builder: (_) => FecharCaixaDialog(
-          resumo:
-              '${dados.lancadosHoje(a).length} lançamento(s) • Total do dia: ${formatarReais(total)}'),
-    );
-    if (anexos == null) return;
-    dados.comprovantes[chave] = anexos;
-    dados.fechamentos[chave] = total;
-    final extra = anexos.isEmpty ? '' : ' • ${anexos.length} comprovante(s) anexado(s)';
-    dados.log('Caixa diário fechado: total ${formatarReais(total)}$extra', a);
-  }
-
-  @override
-  Widget build(BuildContext context) => Obs((c) {
-        final hoje = dados.lancadosHoje(a);
-        final av = dados.avulsosDe(a);
-        final fechado = dados.fechamentos[dados.chaveCaixa(a)];
-        return Pagina(
-          titulo: 'Caixa – ${a.nome}',
-          sub: 'Valores só podem ser lançados sobre atendimentos concluídos. O fechamento diário é bloqueado se houver valor sem vínculo.',
-          acoes: [
-            OutlinedButton.icon(
-                onPressed: () => _lancar(c),
-                icon: const Icon(Icons.add_card),
-                label: const Text('Lançar valor')),
-            FilledButton.icon(
-                onPressed: () => _fechar(c),
-                icon: const Icon(Icons.lock),
-                label: const Text('Fechar caixa')),
-          ],
-          filhos: [
-            Wrap(spacing: 16, runSpacing: 16, children: [
-              kpi(Icons.payments, 'Total lançado hoje', formatarReais(dados.totalDia(a)), Colors.green),
-              kpi(Icons.receipt_long, 'Lançamentos hoje', '${hoje.length}', Colors.blue),
-              kpi(Icons.hourglass_bottom, 'Concluídos a lançar', '${dados.pendentes(a).length}', Colors.orange),
-              kpi(Icons.link_off, 'Sem vínculo', '${av.length}', av.isEmpty ? Colors.grey : Colors.red),
-              kpi(
-                  fechado == null ? Icons.lock_open : Icons.lock,
-                  'Situação',
-                  fechado == null ? 'Aberto' : 'Fechado ${formatarReais(fechado)}',
-                  fechado == null ? Colors.orange : Colors.green),
-            ]),
-            ...secaoComprovantes(c, dados.chaveCaixa(a)),
-            const SizedBox(height: 24),
-            Text('Lançamentos', style: Theme.of(c).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            tabela(
-              ['Hora', 'Cliente / atendimento', 'Forma', 'Valor', 'Vínculo', 'Ação'],
-              [
-                for (final x in hoje)
-                  [
-                    Text(formatarHora(x.quando)),
-                    Text('${x.cliente.nome} • ${x.servico}'),
-                    Text(x.forma ?? ''),
-                    Text(formatarReais(x.valorCentavos)),
-                    chipRotulo('Atendimento #${x.id}', Colors.green, icone: Icons.link),
-                    const Text('—'),
-                  ],
-                for (final v in av)
-                  [
-                    Text(formatarHora(v.data)),
-                    const Text('Valor avulso'),
-                    Text(v.forma),
-                    Text(formatarReais(v.valorCentavos)),
-                    chipRotulo('SEM VÍNCULO', Colors.red, icone: Icons.link_off),
-                    TextButton(
-                        onPressed: () => _vincular(c, v), child: const Text('Vincular')),
-                  ],
-              ],
-            ),
-          ],
-        );
-      });
-}
-
 // ───── admin/paginas/faltas.dart ─────
 class PaginaFaltas extends StatelessWidget {
   const PaginaFaltas(this.a, {super.key});
@@ -1053,7 +1236,7 @@ class PaginaFaltas extends StatelessWidget {
     final agora = DateTime.now();
     var n = 0;
     for (final x in dados.doArea(a)) {
-      if (x.aberto && x.quando.isBefore(agora)) {
+      if (x.aberto && x.quando.isBefore(agora) && !x.chegou) {
         x.status = StatusAtend.ausente;
         n++;
         final f = dados.faltas(x.cliente);
@@ -1264,7 +1447,7 @@ class _PaginaIndicadoresState extends State<PaginaIndicadores> {
     final a = widget.a;
     final csv = StringBuffer('Data;Cliente;Profissional;Serviço;Status;Valor\n');
     for (final x in r) {
-      final valor = x.lancado ? (x.valorCentavos / 100).toStringAsFixed(2) : '';
+      final valor = x.lancado ? (x.valorPago / 100).toStringAsFixed(2) : '';
       csv.writeln(
           '${formatarDataHora(x.quando)};${x.cliente.nome};${x.prof.nome};${x.servico};${x.status.rotulo};$valor');
     }
@@ -1288,7 +1471,7 @@ class _PaginaIndicadoresState extends State<PaginaIndicadores> {
             .toList();
         final conc = r.where((x) => x.status == StatusAtend.concluido).length;
         final falt = r.where((x) => x.status == StatusAtend.ausente).length;
-        final valor = r.fold(0, (s, x) => s + (x.lancado ? x.valorCentavos : 0));
+        final valor = r.fold(0, (s, x) => s + x.valorPago);
         final taxa = r.isEmpty ? 0.0 : falt * 100 / r.length;
         final profs = {for (final x in r) x.prof}.toList();
         final todosProfs = {for (final x in dados.doArea(a)) x.prof}.toList();
@@ -1357,8 +1540,8 @@ class _PaginaIndicadoresState extends State<PaginaIndicadores> {
                       Text('${r.where((x) => x.prof == p && x.status == StatusAtend.concluido).length}'),
                       Text('${r.where((x) => x.prof == p && x.status == StatusAtend.ausente).length}'),
                       Text(formatarReais(r
-                          .where((x) => x.prof == p && x.lancado)
-                          .fold(0, (s, x) => s + x.valorCentavos))),
+                          .where((x) => x.prof == p)
+                          .fold(0, (s, x) => s + x.valorPago))),
                     ]
                 ],
               ),
@@ -1702,16 +1885,16 @@ class VisaoGeral extends StatelessWidget {
         final futuros = l.where((x) => x.aberto && x.quando.isAfter(agora)).length;
         final faltas = l.where((x) => x.status == StatusAtend.ausente).length;
         final ativos = dados.usuarios.where((u) => u.area == a && u.ativo).length;
-        final fechado = dados.fechamentos.containsKey(dados.chaveCaixa(a));
+        final fechado = dados.caixaFechado(a, DateTime.now());
         final alertas = <String>[
           for (final u in dados.clientes(a))
             if (dados.faltas(u) >= 3 && !dados.liberados.contains(u.id))
               '${u.nome} atingiu 3 faltas: novo agendamento bloqueado ou dependente da sua aprovação.',
-          if (l.any((x) => x.aberto && x.quando.isBefore(agora)))
+          if (l.any((x) => x.aberto && x.quando.isBefore(agora) && !x.chegou))
             'Há agendamentos vencidos sem check-in: processe as ausências na aba Faltas.',
           if (l.any((x) => x.lembrete == StatusLembrete.semResposta && x.aberto))
             'Há clientes que não confirmaram o lembrete no prazo.',
-          if (dados.avulsosDe(a).isNotEmpty)
+          if (dados.semVinculoDe(a).isNotEmpty)
             'Existe valor lançado sem vínculo a atendimento: impede o fechamento do caixa.',
           if (dados.pendentes(a).isNotEmpty)
             '${dados.pendentes(a).length} atendimento(s) concluído(s) aguardando lançamento no caixa.',
@@ -1802,28 +1985,25 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return FundoSuave(
+      cores: [Area.estetica.corClara, Area.psicologia.corClara],
+      child: Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: barra(acoes: [
-        if (telaEstreita(context))
-          IconButton(
-              tooltip: 'Voltar',
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => Navigator.pop(context))
-        else
-          TextButton.icon(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back),
-              label: const Text('Voltar')),
+        TextButton.icon(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+            label: const Text('Voltar')),
       ]),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(ehCelular(context) ? 16 : 24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 400),
             child: Card(
               elevation: 6,
               child: Padding(
-                padding: EdgeInsets.all(telaEstreita(context) ? 20 : 32),
+                padding: EdgeInsets.all(ehCelular(context) ? 20 : 32),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1862,6 +2042,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -1873,29 +2054,33 @@ class AdminHome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return FundoSuave(
+      cores: [Area.estetica.corClara, Area.psicologia.corClara],
+      child: Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: barra(acoes: [botaoSair(context)]),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(ehCelular(context) ? 16 : 24),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('Painel do administrador',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
+                style: (ehCelular(context)
+                        ? Theme.of(context).textTheme.titleLarge
+                        : Theme.of(context).textTheme.headlineSmall)
                     ?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             const Text('Acesso total. Escolha a área que deseja administrar.'),
             const SizedBox(height: 32),
             Wrap(
-              spacing: 32,
-              runSpacing: 24,
+              spacing: ehCelular(context) ? 16 : 32,
+              runSpacing: ehCelular(context) ? 16 : 24,
               alignment: WrapAlignment.center,
               children: [for (final a in Area.values) _CardArea(a)],
             ),
           ]),
         ),
       ),
+    ),
     );
   }
 }
@@ -1907,6 +2092,7 @@ class _CardArea extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cel = ehCelular(context);
     return Card(
       elevation: 4,
       clipBehavior: Clip.antiAlias,
@@ -1914,18 +2100,18 @@ class _CardArea extends StatelessWidget {
         onTap: () => Navigator.push(
             context, MaterialPageRoute(builder: (_) => AdminPanel(area: area))),
         child: Padding(
-          padding: const EdgeInsets.all(32),
+          padding: EdgeInsets.all(cel ? 16 : 32),
           child: SizedBox(
-            width: 160,
+            width: cel ? 108 : 160,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               CircleAvatar(
-                  radius: 44,
+                  radius: cel ? 32 : 44,
                   backgroundColor: area.cor,
-                  child: Icon(area.icone, size: 48, color: Colors.white)),
+                  child: Icon(area.icone, size: cel ? 34 : 48, color: Colors.white)),
               const SizedBox(height: 16),
               Text(area.nome,
                   style: TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.w600, color: area.cor)),
+                      fontSize: cel ? 17 : 20, fontWeight: FontWeight.w600, color: area.cor)),
             ]),
           ),
         ),
@@ -1943,8 +2129,8 @@ class SecaoPainel {
   final Widget pagina;
 }
 
-/// Layout comum dos painéis: cabeçalho com logo + menu lateral (gaveta em telas estreitas).
-/// As cores seguem a área (Psicologia = azul, Estética = rosa).
+/// Layout comum dos painéis (administrador e auxiliar): logo no topo, menu lateral
+/// (gaveta em telas estreitas) e as cores da área (rosa na Estética, azul na Psicologia).
 class PainelComMenu extends StatefulWidget {
   const PainelComMenu({
     super.key,
@@ -1974,41 +2160,37 @@ class _PainelComMenuState extends State<PainelComMenu> {
     final s = widget.secoes;
     final largo = MediaQuery.of(context).size.width >= 900;
     if (_i >= s.length) _i = 0;
+    // Menu com o mesmo rosa/azul claro da tela de login; item selecionado na cor escura da área.
+    final fundoMenu = a.corClara;
 
-    // Material (e não Container) para a cor de seleção do ListTile aparecer por cima do fundo.
-    Widget menu() => Material(
-          color: a.fundoClaro,
-          child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            children: [
-              for (var k = 0; k < s.length; k++)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: ListTile(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    selected: k == _i,
-                    selectedColor: a.textoSelecionado,
-                    selectedTileColor: a.fundoSelecionado,
-                    iconColor: Colors.blueGrey.shade700,
-                    textColor: Colors.blueGrey.shade800,
-                    leading: Icon(s[k].icone),
-                    title: Text(
-                      s[k].nome,
-                      style: TextStyle(fontWeight: k == _i ? FontWeight.w700 : FontWeight.w500),
-                    ),
-                    onTap: () {
-                      setState(() => _i = k);
-                      if (!largo) Navigator.pop(context);
-                    },
-                  ),
+    Widget menu() => ListView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            for (var k = 0; k < s.length; k++)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: ListTile(
+                  selected: k == _i,
+                  selectedColor: Colors.white,
+                  selectedTileColor: a.cor,
+                  hoverColor: a.cor.withAlpha(30),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  leading: Icon(s[k].icone),
+                  title: Text(s[k].nome,
+                      style: TextStyle(fontWeight: k == _i ? FontWeight.bold : FontWeight.normal)),
+                  onTap: () {
+                    setState(() => _i = k);
+                    if (!largo) Navigator.pop(context);
+                  },
                 ),
-            ],
-          ),
+              ),
+          ],
         );
 
+    final cel = ehCelular(context);
     final Widget? trocar = !widget.podeTrocarArea
         ? null
-        : telaEstreita(context)
+        : cel
             ? IconButton(
                 tooltip: 'Trocar área',
                 icon: const Icon(Icons.swap_horiz),
@@ -2018,29 +2200,50 @@ class _PainelComMenuState extends State<PainelComMenu> {
                 icon: const Icon(Icons.swap_horiz),
                 label: const Text('Trocar área'));
 
-    return Scaffold(
-      appBar: barra(area: a, acoes: [
-        if (!largo)
-          Builder(
-              builder: (c) => IconButton(
-                  tooltip: 'Menu',
-                  icon: const Icon(Icons.menu),
-                  onPressed: () => Scaffold.of(c).openDrawer())),
-        if (largo)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Text(widget.titulo,
-                style: TextStyle(color: a.cor, fontWeight: FontWeight.bold)),
-          ),
-        if (trocar != null) trocar,
-        widget.sair(context),
-      ]),
-      drawer: largo ? null : Drawer(backgroundColor: a.fundoClaro, child: SafeArea(child: menu())),
-      body: Row(children: [
-        if (largo) SizedBox(width: 250, child: menu()),
-        if (largo) const VerticalDivider(width: 1),
-        Expanded(child: s[_i].pagina),
-      ]),
+    return Theme(
+      data: criarTema(a.cor),
+      child: FundoSuave(
+        cores: [a.corClara, Colors.white],
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: barra(acoes: [
+            if (!largo)
+              Builder(
+                  builder: (c) => IconButton(
+                      tooltip: 'Menu',
+                      icon: const Icon(Icons.menu),
+                      onPressed: () => Scaffold.of(c).openDrawer())),
+            if (largo)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(widget.titulo,
+                    style: TextStyle(color: a.cor, fontWeight: FontWeight.bold)),
+              ),
+            if (trocar != null) trocar,
+            widget.sair(context),
+          ]),
+          drawer: largo ? null : Drawer(backgroundColor: fundoMenu, child: SafeArea(child: menu())),
+          body: Row(children: [
+            if (largo)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 0, 12),
+                child: SizedBox(
+                  width: 250,
+                  child: Material(
+                    color: fundoMenu,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      side: BorderSide(color: a.cor.withAlpha(50)),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: menu(),
+                  ),
+                ),
+              ),
+            Expanded(child: s[_i].pagina),
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -2063,6 +2266,8 @@ class AdminPanel extends StatelessWidget {
         SecaoPainel(Icons.people, 'Usuários', PaginaUsuarios(a)),
         SecaoPainel(Icons.calendar_month, 'Agenda', PaginaAgenda(a)),
         SecaoPainel(Icons.assignment_ind, 'Atendimentos', PaginaAtendimentos(a)),
+        SecaoPainel(Icons.how_to_reg, 'Recepção e fila', PaginaRecepcao(a)),
+        SecaoPainel(Icons.tv, 'Painel da fila', PaginaPainelFila(a)),
         SecaoPainel(Icons.event_busy, 'Faltas', PaginaFaltas(a)),
         SecaoPainel(Icons.notifications_active, 'Lembretes WhatsApp', PaginaLembretes(a)),
         SecaoPainel(Icons.point_of_sale, 'Caixa', PaginaCaixa(a)),
@@ -2071,142 +2276,6 @@ class AdminPanel extends StatelessWidget {
         SecaoPainel(Icons.bar_chart, 'Indicadores e relatórios', PaginaIndicadores(a)),
         const SecaoPainel(Icons.shield, 'Controle de acesso', PaginaAcesso()),
         SecaoPainel(Icons.history, 'Auditoria', PaginaAuditoria(a)),
-      ],
-    );
-  }
-}
-
-// ───── comprovantes de pagamento (fechamento do caixa) ─────
-
-/// Comprovante de pagamento anexado no fechamento do caixa.
-class Comprovante {
-  Comprovante(this.nome, this.tamanho, this.bytes);
-
-  final String nome;
-  final int tamanho;
-
-  /// Conteúdo do arquivo (para enviar ao backend depois).
-  final Uint8List? bytes;
-}
-
-String formatarTamanho(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}
-
-/// Lista os comprovantes anexados no fechamento do dia (vazia se não houver).
-List<Widget> secaoComprovantes(BuildContext c, String chave) {
-  final l = dados.comprovantes[chave];
-  if (l == null || l.isEmpty) return const [];
-  return [
-    const SizedBox(height: 24),
-    Text('Comprovantes de pagamento anexados', style: Theme.of(c).textTheme.titleMedium),
-    const SizedBox(height: 8),
-    Card(
-      child: Column(children: [
-        for (final x in l)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.attach_file),
-            title: Text(x.nome),
-            subtitle: Text(formatarTamanho(x.tamanho)),
-          ),
-      ]),
-    ),
-  ];
-}
-
-/// Confirmação do fechamento do caixa, com a opção de anexar comprovantes de pagamento.
-/// Devolve a lista de anexos (pode ser vazia) ao confirmar, ou null se cancelar.
-class FecharCaixaDialog extends StatefulWidget {
-  const FecharCaixaDialog({super.key, required this.resumo});
-
-  final String resumo;
-
-  @override
-  State<FecharCaixaDialog> createState() => _FecharCaixaDialogState();
-}
-
-class _FecharCaixaDialogState extends State<FecharCaixaDialog> {
-  static const _maxBytes = 5 * 1024 * 1024;
-
-  final _anexos = <Comprovante>[];
-  String? _erro;
-
-  Future<void> _anexar() async {
-    final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
-      allowMultiple: true,
-      withData: true,
-    );
-    if (r == null || !mounted) return;
-    final recusados = <String>[];
-    setState(() {
-      for (final f in r.files) {
-        if (f.size > _maxBytes) {
-          recusados.add(f.name);
-        } else {
-          _anexos.add(Comprovante(f.name, f.size, f.bytes));
-        }
-      }
-      _erro = recusados.isEmpty
-          ? null
-          : 'Não anexado (maior que 5 MB): ${recusados.join(', ')}';
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Fechar caixa de hoje?'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(widget.resumo),
-              const SizedBox(height: 16),
-              const Text('Comprovantes de pagamento (opcional)',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _anexar,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Anexar comprovante'),
-              ),
-              const SizedBox(height: 4),
-              const Text('PDF, PNG ou JPG, até 5 MB cada.', style: TextStyle(fontSize: 12)),
-              for (var i = 0; i < _anexos.length; i++)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.attach_file),
-                  title: Text(_anexos[i].nome),
-                  subtitle: Text(formatarTamanho(_anexos[i].tamanho)),
-                  trailing: IconButton(
-                    tooltip: 'Remover',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => setState(() => _anexos.removeAt(i)),
-                  ),
-                ),
-              if (_erro != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(_erro!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-        FilledButton(
-            onPressed: () => Navigator.pop(context, List<Comprovante>.of(_anexos)),
-            child: const Text('Confirmar fechamento')),
       ],
     );
   }
